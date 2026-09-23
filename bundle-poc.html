@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>C# in the browser — Blazor WebAssembly PoC</title>
+    <style>
+      :root {
+        --bg: #12141a;
+        --panel: #1b1e27;
+        --border: #2c3040;
+        --text: #e6e8ee;
+        --muted: #8b93a7;
+        --accent: #8b7cf6;
+        --error: #ff6b81;
+        --warning: #f0b429;
+        --ok: #3ddc97;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px;
+      }
+      header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+      h1 { font-size: 16px; margin: 0; font-weight: 600; }
+      .subtitle { color: var(--muted); font-size: 13px; }
+      #status {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--muted);
+        padding: 3px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+      #status.ready { color: var(--ok); border-color: #2f6b52; }
+      #status.loading { color: var(--warning); border-color: #6b5726; }
+      #status.failed { color: var(--error); border-color: #6b2f38; }
+      main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        min-height: 0;
+      }
+      @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+      section {
+        display: flex;
+        flex-direction: column;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        min-height: 0;
+      }
+      .section-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      #code, #output {
+        flex: 1;
+        margin: 0;
+        padding: 12px;
+        border: 0;
+        background: transparent;
+        color: var(--text);
+        font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        min-height: 240px;
+        white-space: pre-wrap;
+        overflow: auto;
+      }
+      #code { resize: none; outline: none; tab-size: 4; }
+      #output { word-break: break-word; }
+      .out-error { color: var(--error); }
+      .out-warning { color: var(--warning); }
+      .out-muted { color: var(--muted); }
+      footer { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+      label { color: var(--muted); font-size: 12px; padding-bottom: 9px; }
+      #stdin {
+        flex: 1;
+        min-width: 180px;
+        height: 38px;
+        min-height: 38px;
+        max-height: 140px;
+        resize: vertical;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        padding: 8px 10px;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        white-space: pre;
+        overflow: auto;
+        outline: none;
+      }
+      button {
+        background: var(--accent);
+        color: #0d0f14;
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 22px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>C# in the browser</h1>
+      <span class="subtitle"
+        >.NET WebAssembly + Roslyn — the compiler and the runtime both run in this page, no
+        server</span
+      >
+      <span id="status">starting…</span>
+    </header>
+
+    <main>
+      <section>
+        <div class="section-head"><span>Program.cs</span></div>
+        <textarea id="code" spellcheck="false"></textarea>
+      </section>
+      <section>
+        <div class="section-head"><span>Output</span></div>
+        <pre id="output"></pre>
+      </section>
+    </main>
+
+    <footer>
+      <label for="stdin">stdin</label>
+      <textarea
+        id="stdin"
+        spellcheck="false"
+        placeholder="one line of input per Console.ReadLine()"
+      ></textarea>
+      <button id="run" disabled>Run</button>
+    </footer>
+
+    <!-- Root component target expected by the bundle's Blazor host. -->
+    <div id="app" hidden></div>
+
+    <script>
+      // The bundle: a Blazor WebAssembly app (MyRunnyApp) that embeds the real Roslyn C#
+      // compiler and the .NET reference assemblies, and exposes `RunCode(source, stdin)`.
+      // Everything runs client-side; nothing is uploaded anywhere.
+      var DEFAULT_BASE_URL = 'https://cdn.jsdelivr.net/npm/@seth0x41/csharp-wasm@1.0.3/';
+      var params = new URLSearchParams(location.search);
+      var BASE_URL = (params.get('baseUrl') || DEFAULT_BASE_URL).replace(/\/+$/, '') + '/';
+
+      var SAMPLE = [
+        'using System;',
+        '',
+        'class Program',
+        '{',
+        '    static void Main()',
+        '    {',
+        '        Console.WriteLine("Hello from C# in the browser!");',
+        '        Console.WriteLine($"2 + 2 = {2 + 2}");',
+        '',
+        '        Console.Write("What is your name? ");',
+        '        var name = Console.ReadLine();',
+        '        Console.WriteLine(string.IsNullOrEmpty(name)',
+        '            ? "Hello, stranger!"',
+        '            : $"Hello, {name}!");',
+        '    }',
+        '}',
+        '',
+      ].join('\n');
+
+      var statusEl = document.getElementById('status');
+      var runButton = document.getElementById('run');
+      var codeEl = document.getElementById('code');
+      var stdinEl = document.getElementById('stdin');
+      var outputEl = document.getElementById('output');
+
+      codeEl.value = SAMPLE;
+
+      function setStatus(text, className) {
+        statusEl.textContent = text;
+        statusEl.className = className || '';
+      }
+
+      function writeLine(text, className) {
+        var line = document.createElement('div');
+        line.className = className || '';
+        line.textContent = text;
+        outputEl.appendChild(line);
+      }
+
+      function write(text, className) {
+        String(text)
+          .split('\n')
+          .forEach(function (line) {
+            writeLine(line, className);
+          });
+      }
+
+      // jsDelivr serves the bundle cross-origin; Blazor's fetches must not carry
+      // credentials or the CDN rejects them.
+      var originalFetch = window.fetch;
+      window.fetch = function (resource, init) {
+        var url =
+          typeof resource === 'string'
+            ? resource
+            : 'url' in resource
+              ? resource.url
+              : resource.href;
+        if (url.indexOf(BASE_URL) === 0) {
+          return originalFetch(resource, Object.assign({}, init, { credentials: 'omit' }));
+        }
+        return originalFetch(resource, init);
+      };
+
+      var loadedResources = 0;
+      var bootPromise = null;
+
+      function loadBlazorScript() {
+        return new Promise(function (resolve, reject) {
+          var script = document.createElement('script');
+          script.src = BASE_URL + '_framework/blazor.webassembly.js';
+          script.setAttribute('autostart', 'false');
+          script.onload = function () {
+            resolve();
+          };
+          script.onerror = function () {
+            reject(new Error('Could not load blazor.webassembly.js from ' + BASE_URL));
+          };
+          document.head.appendChild(script);
+        });
+      }
+
+      function boot() {
+        if (bootPromise) return bootPromise;
+        bootPromise = loadBlazorScript()
+          .then(function () {
+            return window.Blazor.start({
+              loadBootResource: function (_type, name) {
+                loadedResources++;
+                setStatus('downloading runtime… (' + loadedResources + ' files)', 'loading');
+                return BASE_URL + '_framework/' + name;
+              },
+            });
+          })
+          .then(function () {
+            setStatus('ready', 'ready');
+            runButton.disabled = false;
+          })
+          .catch(function (err) {
+            bootPromise = null;
+            setStatus('failed to start', 'failed');
+            writeLine(String((err && err.message) || err), 'out-error');
+            throw err;
+          });
+        return bootPromise;
+      }
+
+      // The app assembly is loaded lazily just after Blazor.start() resolves, so the
+      // first interop call can race it. Retry until the assembly is present.
+      function invokeRunCode(source, stdin) {
+        var attempt = 0;
+        function tryInvoke() {
+          return window.DotNet.invokeMethodAsync('MyRunnyApp', 'RunCode', source, stdin).catch(
+            function (err) {
+              var message = String((err && err.message) || err);
+              if (message.indexOf('no loaded assembly') >= 0 && attempt++ < 240) {
+                return new Promise(function (resolve) {
+                  setTimeout(resolve, 250);
+                }).then(tryInvoke);
+              }
+              throw err;
+            },
+          );
+        }
+        return tryInvoke();
+      }
+
+      async function run() {
+        runButton.disabled = true;
+        outputEl.textContent = '';
+        writeLine('Compiling…', 'out-muted');
+        var started = performance.now();
+        try {
+          await boot();
+          var result = await invokeRunCode(codeEl.value, stdinEl.value);
+          var elapsed = Math.round(performance.now() - started);
+
+          outputEl.textContent = '';
+          if (result.output) write(result.output);
+          if (result.errors) write(result.errors, 'out-error');
+          if (!result.output && !result.errors) writeLine('(no output)', 'out-muted');
+
+          setStatus((result.success ? 'ready' : 'failed') + ' — ' + elapsed + ' ms', result.success ? 'ready' : 'failed');
+        } catch (err) {
+          outputEl.textContent = '';
+          writeLine(String((err && err.message) || err), 'out-error');
+          setStatus('failed', 'failed');
+          console.error(err);
+        } finally {
+          runButton.disabled = false;
+        }
+      }
+
+      runButton.addEventListener('click', run);
+      codeEl.addEventListener('keydown', function (event) {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') run();
+      });
+
+      setStatus('downloading runtime…', 'loading');
+      boot().then(run, function () {});
+    </script>
+  </body>
+</html>

@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blazor component playground</title>
+    <base href="/" />
+    <style>
+      :root {
+        --bg: #12141a;
+        --panel: #1b1e27;
+        --border: #2c3040;
+        --text: #e6e8ee;
+        --muted: #8b93a7;
+        --accent: #8b7cf6;
+        --error: #ff6b81;
+        --warning: #f0b429;
+        --ok: #3ddc97;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px;
+      }
+      header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+      h1 { font-size: 16px; margin: 0; font-weight: 600; }
+      .subtitle { color: var(--muted); font-size: 13px; }
+      #status {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--muted);
+        padding: 3px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+      #status.ready { color: var(--ok); border-color: #2f6b52; }
+      #status.loading { color: var(--warning); border-color: #6b5726; }
+      #status.failed { color: var(--error); border-color: #6b2f38; }
+      main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        min-height: 0;
+      }
+      @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+      section {
+        display: flex;
+        flex-direction: column;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        min-height: 0;
+      }
+      .section-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      #code {
+        flex: 1;
+        margin: 0;
+        padding: 12px;
+        border: 0;
+        background: transparent;
+        color: var(--text);
+        font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        min-height: 280px;
+        resize: none;
+        outline: none;
+        tab-size: 4;
+        white-space: pre;
+        overflow: auto;
+      }
+      #stage { flex: 1; padding: 16px; overflow: auto; }
+      #diagnostics {
+        padding: 10px 12px;
+        border-top: 1px solid var(--border);
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--error);
+        max-height: 140px;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+      #diagnostics:empty { display: none; }
+      footer { display: flex; align-items: center; gap: 10px; }
+      button {
+        background: var(--accent);
+        color: #0d0f14;
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 22px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      .hint { color: var(--muted); font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Blazor component playground</h1>
+      <span class="subtitle"
+        >write a Blazor component in C# — Roslyn compiles it in this page and it renders on the
+        real Blazor renderer, no server</span
+      >
+      <span id="status">starting…</span>
+    </header>
+
+    <main>
+      <section>
+        <div class="section-head"><span>Component.cs</span></div>
+        <textarea id="code" spellcheck="false"></textarea>
+      </section>
+      <section>
+        <div class="section-head"><span>Rendered component</span></div>
+        <div id="stage">
+          <!-- The app's root component mounts here. -->
+          <div id="blazor-app"></div>
+        </div>
+        <pre id="diagnostics"></pre>
+      </section>
+    </main>
+
+    <footer>
+      <button id="render" disabled>Render</button>
+      <span class="hint">Ctrl/Cmd + Enter to render</span>
+    </footer>
+
+    <script src="_framework/blazor.webassembly.js" autostart="false"></script>
+    <script>
+      var SAMPLE = [
+        'using System;',
+        'using Microsoft.AspNetCore.Components;',
+        'using Microsoft.AspNetCore.Components.Rendering;',
+        'using Microsoft.AspNetCore.Components.Web;',
+        '',
+        'public class Counter : ComponentBase',
+        '{',
+        '    int count;',
+        '',
+        '    void Increment() => count++;',
+        '',
+        '    protected override void BuildRenderTree(RenderTreeBuilder builder)',
+        '    {',
+        '        builder.OpenElement(0, "div");',
+        '        builder.AddAttribute(1, "style", "text-align:center; font-family:sans-serif");',
+        '',
+        '        builder.OpenElement(2, "h1");',
+        '        builder.AddContent(3, $"Count: {count}");',
+        '        builder.CloseElement();',
+        '',
+        '        builder.OpenElement(4, "button");',
+        '        builder.AddAttribute(5, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, Increment));',
+        '        builder.AddContent(6, "Click me");',
+        '        builder.CloseElement();',
+        '',
+        '        builder.CloseElement();',
+        '    }',
+        '}',
+        '',
+      ].join('\n');
+
+      var statusEl = document.getElementById('status');
+      var renderButton = document.getElementById('render');
+      var codeEl = document.getElementById('code');
+      var diagnosticsEl = document.getElementById('diagnostics');
+
+      codeEl.value = SAMPLE;
+
+      function setStatus(text, className) {
+        statusEl.textContent = text;
+        statusEl.className = className || '';
+      }
+
+      var bootPromise = null;
+
+      function boot() {
+        if (bootPromise) return bootPromise;
+        bootPromise = window.Blazor.start()
+          .then(function () {
+            setStatus('ready', 'ready');
+            renderButton.disabled = false;
+          })
+          .catch(function (err) {
+            bootPromise = null;
+            setStatus('failed to start', 'failed');
+            diagnosticsEl.textContent = String((err && err.message) || err);
+            throw err;
+          });
+        return bootPromise;
+      }
+
+      // The app assembly is loaded lazily just after Blazor.start() resolves, so the first
+      // interop call can race it. Retry until the assembly is present.
+      function invoke(source) {
+        var attempt = 0;
+        function tryInvoke() {
+          return window.DotNet.invokeMethodAsync('BlazorRunner', 'RenderComponent', source).catch(
+            function (err) {
+              var message = String((err && err.message) || err);
+              if (message.indexOf('no loaded assembly') >= 0 && attempt++ < 240) {
+                return new Promise(function (resolve) {
+                  setTimeout(resolve, 250);
+                }).then(tryInvoke);
+              }
+              throw err;
+            },
+          );
+        }
+        return tryInvoke();
+      }
+
+      async function render() {
+        renderButton.disabled = true;
+        diagnosticsEl.textContent = '';
+        var started = performance.now();
+        try {
+          await boot();
+          var json = await invoke(codeEl.value);
+          var result = typeof json === 'string' ? JSON.parse(json) : json;
+          var elapsed = Math.round(performance.now() - started);
+
+          if (result.success) {
+            setStatus('rendered ' + result.type + ' — ' + elapsed + ' ms', 'ready');
+          } else {
+            diagnosticsEl.textContent = (result.errors || [])
+              .map(function (e) {
+                return e.id + ': ' + e.message + (e.line ? ' (line ' + e.line + ')' : '');
+              })
+              .join('\n');
+            setStatus('failed — ' + elapsed + ' ms', 'failed');
+          }
+        } catch (err) {
+          diagnosticsEl.textContent = String((err && err.message) || err);
+          setStatus('failed', 'failed');
+          console.error(err);
+        } finally {
+          renderButton.disabled = false;
+        }
+      }
+
+      renderButton.addEventListener('click', render);
+      codeEl.addEventListener('keydown', function (event) {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') render();
+      });
+
+      setStatus('downloading runtime…', 'loading');
+      boot().then(render, function () {});
+    </script>
+  </body>
+</html>
