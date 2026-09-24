@@ -114,7 +114,7 @@ public static class RazorCompiler
         errors = Array.Empty<DiagnosticInfo>();
 
         var razorFiles = (files ?? Array.Empty<SourceFile>())
-            .Where(file => file is not null && !string.IsNullOrEmpty(file.Name))
+            .Where(file => file is not null && !string.IsNullOrEmpty(file.Filename))
             .ToArray();
 
         var compilation = CSharpCompilation.Create(
@@ -123,7 +123,7 @@ public static class RazorCompiler
             references: ReferenceAssemblies.All);
 
         var additionalTexts = new List<AdditionalText> { new RazorAdditionalText(ImportsFileName, ImportsSource) };
-        additionalTexts.AddRange(razorFiles.Select(file => (AdditionalText)new RazorAdditionalText(file.Name, file.Content ?? "")));
+        additionalTexts.AddRange(razorFiles.Select(file => (AdditionalText)new RazorAdditionalText(file.Filename, file.Content ?? "")));
 
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
             new[] { GetGenerator().AsSourceGenerator() },

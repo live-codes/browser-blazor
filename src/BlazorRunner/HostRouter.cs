@@ -26,6 +26,8 @@ public class HostRouter : ComponentBase
         {
             view.OpenComponent<RouteView>(0);
             view.AddAttribute(1, "RouteData", routeData);
+            // Pages that declare @layout still win; this is only the default.
+            view.AddAttribute(2, "DefaultLayout", typeof(HostLayout));
             view.CloseComponent();
         }));
         builder.AddAttribute(seq++, "NotFound", (RenderFragment)(notFound =>

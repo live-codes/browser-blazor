@@ -44,7 +44,7 @@ public static class BlazorBridge
     [JSInvokable]
     public static Task<string> RenderComponent(string source, string rootType) =>
         Render(() => ComponentCompiler.Compile(
-            new[] { new SourceFile { Name = "Components.cs", Content = source ?? "" } },
+            new[] { new SourceFile { Filename = "Components.cs", Content = source ?? "" } },
             rootType));
 
     /// <summary>Compiles and renders a single component written as <c>.razor</c> markup.
@@ -56,7 +56,7 @@ public static class BlazorBridge
             {
                 new SourceFile
                 {
-                    Name = (string.IsNullOrEmpty(componentName) ? "App" : componentName) + ".razor",
+                    Filename = (string.IsNullOrEmpty(componentName) ? "App" : componentName) + ".razor",
                     Content = source ?? "",
                 },
             },

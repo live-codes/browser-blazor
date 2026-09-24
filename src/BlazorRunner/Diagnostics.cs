@@ -28,10 +28,11 @@ public sealed class DiagnosticInfo
         new DiagnosticInfo { Id = id, Message = message, Severity = "Error" };
 }
 
-/// <summary>One source file of a project, as sent from the page.</summary>
+/// <summary>One source file of a project, as sent from the page. Directory separators in
+/// <see cref="Filename"/> are allowed, so a project can be organised in folders.</summary>
 public sealed class SourceFile
 {
-    public string Name { get; set; }
+    public string Filename { get; set; }
     public string Content { get; set; }
 }
 

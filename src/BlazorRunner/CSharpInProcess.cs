@@ -21,7 +21,7 @@ public static class CSharpInProcess
         out int imageLength,
         out DiagnosticInfo[] errors) =>
         TryCompile(
-            new[] { new SourceFile { Name = fileName, Content = source } },
+            new[] { new SourceFile { Filename = fileName, Content = source } },
             outputKind,
             out assembly,
             out imageLength,
@@ -39,7 +39,7 @@ public static class CSharpInProcess
 
         var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
         var trees = (sources ?? Array.Empty<SourceFile>())
-            .Select(file => CSharpSyntaxTree.ParseText(file.Content ?? "", parseOptions, path: file.Name))
+            .Select(file => CSharpSyntaxTree.ParseText(file.Content ?? "", parseOptions, path: file.Filename))
             .ToArray();
 
         var options = new CSharpCompilationOptions(outputKind)

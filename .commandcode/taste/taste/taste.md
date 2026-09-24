@@ -6,3 +6,4 @@
 - Prefers consolidating shared dependencies into a single bundle/package rather than shipping duplicates; asks whether a new artifact can also replace an existing implementation to reuse its dependencies (Roslyn, runtime, reference assemblies). Confidence: 0.6
 - Expects the agent to keep iterating autonomously until the feature actually works and the artifact is packaged/ready for use, rather than stopping at a blocker or a documented "deferred" finding; "keep iterating till X works". Confidence: 0.65
 - Prefers finishing a feature in its own standalone project before wiring it into the consumer/main repo (e.g. "Do not change LiveCodes for now — let's complete the Blazor support first"); integration is a separate, later step. Confidence: 0.75
+- Wants build artifacts (bin/obj/package/refs) committed to git rather than gitignored; edits `.gitignore` themselves to stop ignoring them and expects the agent to include artifacts in commits. Confidence: 0.65

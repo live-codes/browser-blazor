@@ -132,6 +132,14 @@
         cursor: pointer;
       }
       #stage a { color: var(--accent); }
+      #stage .demo-layout {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+      }
+      #stage .demo-layout nav { display: flex; gap: 14px; margin-bottom: 12px; }
+      #stage .plain-layout { border-left: 3px solid var(--accent); padding-left: 12px; }
+      #stage code { color: var(--muted); }
       #diagnostics {
         padding: 10px 12px;
         border-top: 1px solid var(--border);
@@ -213,50 +221,94 @@
 
     <script src="blazor-wasm.js"></script>
     <script>
+      // A project is a list of { filename, content }. Filenames may contain folders, and .razor and
+      // .cs files can be mixed freely — everything compiles into one assembly.
       var DEFAULT_PROJECTS = {
         razor: {
           files: [
             {
-              name: 'App.razor',
+              filename: 'App.razor',
               content: `<Router AppAssembly="typeof(App).Assembly">
     <Found Context="routeData">
-        <RouteView RouteData="routeData" />
+        <RouteView RouteData="routeData" DefaultLayout="typeof(MainLayout)" />
     </Found>
     <NotFound>
-        <p>No component matches this route.</p>
+        <LayoutView Layout="typeof(MainLayout)">
+            <p>No page matches this route.</p>
+        </LayoutView>
     </NotFound>
 </Router>
 `,
             },
             {
-              name: 'Home.razor',
+              filename: 'MainLayout.razor',
+              content: `@inherits LayoutComponentBase
+
+<div class="demo-layout">
+    <nav>
+        <NavLink href="/">Home</NavLink>
+        <NavLink href="/counter">Counter</NavLink>
+        <NavLink href="/about">About</NavLink>
+    </nav>
+    <main>@Body</main>
+</div>
+`,
+            },
+            {
+              filename: 'PlainLayout.razor',
+              content: `@inherits LayoutComponentBase
+
+<article class="plain-layout">@Body</article>
+`,
+            },
+            {
+              filename: 'Pages/Home.razor',
               content: `@page "/"
 
 <h1>Home</h1>
 
-<p>
-    A multi-file project: <code>App.razor</code> routes, and each page is its own file that
-    declares <code>@page</code>.
-</p>
+<p>@Greeting.For("Blazor")</p>
 
-<p><NavLink href="/counter">Go to /counter</NavLink></p>
+<p>
+    This project mixes <code>.razor</code> with <code>Greeting.cs</code>, and its pages live in a
+    <code>Pages/</code> folder.
+</p>
 `,
             },
             {
-              name: 'Counter.razor',
+              filename: 'Pages/Counter.razor',
               content: `@page "/counter"
+@layout PlainLayout
 
 <h2>Counter</h2>
 
 <p>You clicked <strong>@count</strong> times.</p>
 <button @onclick="Increment">Click me</button>
 
-<p><NavLink href="/">Back home</NavLink></p>
-
 @code {
     int count;
 
     void Increment() => count++;
+}
+`,
+            },
+            {
+              filename: 'Pages/About.razor',
+              content: `@page "/about"
+
+<h2>About</h2>
+
+<p>Nested paths work: this page is at <code>Pages/About.razor</code>.</p>
+`,
+            },
+            {
+              filename: 'Greeting.cs',
+              content: `using System;
+
+/// <summary>A plain C# file in the same project — the Razor pages call it.</summary>
+public static class Greeting
+{
+    public static string For(string name) => "Hello from C#, " + name + "!";
 }
 `,
             },
@@ -266,13 +318,36 @@
         csharp: {
           files: [
             {
-              name: 'Components.cs',
+              filename: 'App.cs',
+              content: `using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Rendering;
+
+public class App : ComponentBase
+{
+    protected override void BuildRenderTree(RenderTreeBuilder builder)
+    {
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "style", "text-align:center; font-family:sans-serif");
+
+        builder.OpenElement(2, "h1");
+        builder.AddContent(3, Greeting.For("a C# project"));
+        builder.CloseElement();
+
+        builder.OpenComponent<Counter>(4);
+        builder.CloseComponent();
+
+        builder.CloseElement();
+    }
+}
+`,
+            },
+            {
+              filename: 'Counter.cs',
               content: `using System;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.Web;
 
-// A component per class; they compile into one assembly, so App can use Counter.
 public class Counter : ComponentBase
 {
     int count;
@@ -285,23 +360,13 @@ public class Counter : ComponentBase
         builder.CloseElement();
     }
 }
-
-public class App : ComponentBase
+`,
+            },
+            {
+              filename: 'Greeting.cs',
+              content: `public static class Greeting
 {
-    protected override void BuildRenderTree(RenderTreeBuilder builder)
-    {
-        builder.OpenElement(0, "div");
-        builder.AddAttribute(1, "style", "text-align:center; font-family:sans-serif");
-
-        builder.OpenElement(2, "h1");
-        builder.AddContent(3, "A C# project");
-        builder.CloseElement();
-
-        builder.OpenComponent<Counter>(4);
-        builder.CloseComponent();
-
-        builder.CloseElement();
-    }
+    public static string For(string name) => "Hello, " + name + "!";
 }
 `,
             },
@@ -346,7 +411,7 @@ public class App : ComponentBase
         project.files.forEach(function (file, index) {
           var tab = document.createElement('button');
           tab.className = 'tab' + (index === activeFile ? ' active' : '');
-          tab.textContent = file.name;
+          tab.textContent = file.filename;
           tab.onclick = function () {
             saveActiveFile();
             activeFile = index;
@@ -427,10 +492,17 @@ public class App : ComponentBase
       });
 
       addButton.addEventListener('click', function () {
-        var name = prompt('File name', 'Page.razor');
-        if (!name) return;
+        var filename = prompt('File name', 'Pages/Page.razor');
+        if (!filename) return;
         saveActiveFile();
-        project.files.push({ name: name, content: name.endsWith('.razor') ? '@page "/' + name.replace(/\.razor$/i, '').toLowerCase() + '"\n\n<h2>' + name.replace(/\.razor$/i, '') + '</h2>\n' : '' });
+        var isRazor = /\.razor$/i.test(filename);
+        var name = filename.replace(/^.*[\\/]/, '').replace(/\.razor$/i, '');
+        project.files.push({
+          filename: filename,
+          content: isRazor
+            ? '@page "/' + name.toLowerCase() + '"\n\n<h2>' + name + '</h2>\n'
+            : '',
+        });
         activeFile = project.files.length - 1;
         loadActiveFile();
         renderTabs();

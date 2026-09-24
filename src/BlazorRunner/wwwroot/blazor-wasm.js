@@ -10,10 +10,10 @@
  *     const runner = BlazorRunner.create();            // defaults to the script's own folder
  *
  *     // A project: any mix of .razor markup and C#, compiled together, so components can
- *     // reference each other and @page components register routes.
+ *     // reference each other and @page components register routes. Filenames may contain folders.
  *     const a = await runner.renderProject([
- *       { name: 'App.razor', content: '<Router AppAssembly="typeof(App).Assembly">…</Router>' },
- *       { name: 'Counter.razor', content: '@page "/counter"\n<button @onclick="Go">@count</button>\n@code { int count; void Go() => count++; }' },
+ *       { filename: 'App.razor', content: '<Router AppAssembly="typeof(App).Assembly">…</Router>' },
+ *       { filename: 'Pages/Counter.razor', content: '@page "/counter"\n<button @onclick="Go">@count</button>\n@code { int count; void Go() => count++; }' },
  *     ], 'App');
  *
  *     // or a single component:
@@ -144,7 +144,7 @@
             ready: function () {
                 return boot();
             },
-            /** Compiles and renders a project: a JSON-able array of { name, content }. */
+            /** Compiles and renders a project: a JSON-able array of { filename, content }. */
             renderProject: function (files, rootComponent) {
                 return call('RenderProject', [JSON.stringify(files || []), rootComponent || '']);
             },
