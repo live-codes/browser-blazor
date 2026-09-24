@@ -69,11 +69,14 @@ The package ships `blazor-wasm.js`, a loader that hides the boot sequence (fetch
   const result = await runner.renderProject(
     [
       { filename: 'App.razor', content: '<Router AppAssembly="typeof(App).Assembly">…</Router>' },
-      { filename: 'Pages/Home.razor', content: '@page "/"\n<h1>Home</h1>' },
+      { filename: 'Pages/Home.razor', content: '@page "/"\n<h1>Home</h1>\n<img src="logo.svg" />' },
       { filename: 'Pages/Counter.razor', content: '@page "/counter"\n<button @onclick="Go">@count</button>\n@code { int count; void Go() => count++; }' },
+      { filename: 'Pages/Counter.razor.css', content: 'button { color: red; }' },
+      { filename: 'wwwroot/logo.svg', content: '<svg …/>' },
       { filename: 'Greeting.cs', content: 'public static class Greeting { public static string For(string n) => "Hi " + n; }' },
     ],
     'App',                       // optional: the component to render
+    'MyApp',                     // optional: the project's namespace
   );
   // result.routes -> ['/', '/counter']
 
@@ -92,9 +95,9 @@ different copy or report download progress. The playground uses this same loader
 
 A project is compiled the way a local one is, so what builds here builds locally: a file's folder
 becomes part of its namespace (`Pages/Home.razor` is `UserRazor.Pages.Home`, `Layout/MainLayout.razor`
-is `UserRazor.Layout.MainLayout`), `@page` declares routes, and `@using`s come from the project's own
-`_Imports.razor` — a template-style one is supplied only when the project has none. `UserRazor` is the
-project's root namespace, standing in for the project name.
+is `UserRazor.Layout.MainLayout`), `@page` declares routes, `Name.razor.css` scopes `Name.razor`, and
+`@using`s come from the project's own `_Imports.razor` — a template-style one is supplied only when
+the project has none. `UserRazor` is the project's root namespace unless you pass one.
 
 ## Step 1 — findings
 
@@ -124,7 +127,7 @@ Called from the page with `DotNet.invokeMethodAsync('BlazorRunner', …)`:
 
 | Method | Returns |
 | ------ | ------- |
-| `RenderProject(filesJson, rootType)` | `{ success, type, bytes, routes[], errors[] }` — compiles a project of `{ filename, content }` files (`.razor` and/or `.cs`, in any folders) and renders it. `rootType` optionally names the component to render. |
+| `RenderProject(filesJson, rootType, rootNamespace)` | `{ success, type, bytes, routes[], styles, assets, errors[] }` — compiles a project of `{ filename, content }` files (`.razor`, `.razor.css`, `.cs` and `wwwroot/` assets, in any folders) and renders it. `rootType` optionally names the component to render; `rootNamespace` is the project's namespace (default `UserRazor`). |
 | `RenderRazor(source, componentName)` | Same, for a single `.razor` file. `componentName` names the generated class (default `App`). |
 | `RenderComponent(source, rootType)` | Same, for a single C# file. |
 | `NavigateTo(url)` | Drives the host's `NavigationManager`, for `@page` routing. |
@@ -179,6 +182,15 @@ A component that throws *while rendering* comes back as `success: false` with th
 - **Layouts work.** Routed pages render through `RouteView`, so a page's `@layout` is honoured (and
   `LayoutComponentBase`/`@Body` behave as usual); `RouteView` also takes a `DefaultLayout`, which a
   project sets in its `App.razor`. When nothing names a layout, `HostRouter` supplies `HostLayout`.
+- **CSS isolation works.** `<Name>.razor.css` is scoped to `<Name>.razor`: the component's elements
+  carry a `b-xxxxxxxxxx` attribute (the generator applies the scope that the SDK's `CssScope` item
+  metadata names) and `CssScoper` rewrites the stylesheet's selectors to match — the scope goes on the
+  last compound selector, or on the last compound before `::deep`, with `@media` recursed into and
+  `@keyframes` left alone. The rewritten sheet is rendered alongside the component.
+- **Static assets are served.** A project's `wwwroot/` files come back as data URLs keyed by their path
+  below it, and the loader points the rendered `src`/`href`/`poster` attributes at them, so
+  `<img src="logo.svg">` works as it does locally. A file whose content is already a `data:` URL is
+  passed through, so binary assets can be supplied pre-encoded.
 - **Razor is compiled by the real Razor compiler.** There is no standalone Razor library any more, so
   `RazorCompiler` drives the SDK's incremental generator
   (`Microsoft.NET.Sdk.Razor.SourceGenerators.RazorSourceGenerator`) through a `CSharpGeneratorDriver`,
@@ -234,6 +246,12 @@ Checked in a real browser (headless Chrome via CDP), against the packaged output
   through its own `@layout PlainLayout` (no nav);
 - **routing**: navigating to `/counter` renders that page (URL becomes `/counter`) and its counter
   increments, and opening `/about` directly renders that page;
+- **scoped CSS**: `Layout/MainLayout.razor.css` is applied to the layout's own elements (the layout
+  carries `b-3ba7bwx37v` and its computed `border-left` comes from the scoped rule), and its
+  `::deep a` rule reaches the links `NavLink` renders;
+- **static assets**: `wwwroot/logo.svg` is resolved — the rendered `<img src="logo.svg">` is pointed at
+  its data URL;
+- **namespace**: rendering with `MyCompany.MyApp` yields `rendered MyCompany.MyApp.App`;
 - **C# project**: three files (`App.cs`, `Counter.cs`, `Greeting.cs`) render together;
 - **console**: `run` returns `{ success: true, output: "console works" }`;
 - a Razor error is reported against the **markup** line (`CS0029: … (line 4)`);
@@ -256,9 +274,11 @@ Checked in a real browser (headless Chrome via CDP), against the packaged output
   content-hashed `BlazorRunner.<hash>.wasm` behind — ~12 MB of dead weight each time, with only one
   referenced. `make-package.ps1` always publishes into a fresh staging directory and asserts a single
   assembly.
-- **One project per render.** There is no project-wide build step and no static assets (CSS or
-  images); nested `@page` parameters (`/{id:int}`) transpile but are untested here. `bin/` and `obj/`
-  are build output and are not tracked — `package/` and `src/BlazorRunner/refs/` are.
+- **One project per render.** There is no project-wide build step; nested `@page` parameters
+  (`/{id:int}`) transpile but are untested here, and a `wwwroot/` file is exposed as a data URL rather
+  than at a real path, so only `src`/`href`/`poster` attributes are rewritten (not, say, `url(...)`
+  inside CSS). `bin/` and `obj/` are build output and are not tracked — `package/` and
+  `src/BlazorRunner/refs/` are.
 - **Per-render leakage is negligible.** Each render loads a new assembly into the default load
   context, but a compiled project is only a few KB.
 

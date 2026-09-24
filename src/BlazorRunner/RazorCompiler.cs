@@ -29,11 +29,11 @@ public static class RazorCompiler
 {
     const string ImportsFileName = "_Imports.razor";
 
-    /// <summary>The root namespace of the user's project — the stand-in for a project name, and what
-    /// folder namespaces are built from (<c>UserRazor.Layout</c>).</summary>
-    const string RootNamespace = "UserRazor";
-
     const string GeneratorTypeName = "Microsoft.NET.Sdk.Razor.SourceGenerators.RazorSourceGenerator";
+
+    /// <summary>The root namespace used when a project does not name one — the stand-in for a project
+    /// name, and what folder namespaces are built from (<c>UserRazor.Layout</c>).</summary>
+    public const string DefaultRootNamespace = "UserRazor";
 
     /// <summary>
     /// What a Blazor project gets from its template's root <c>_Imports.razor</c>, used only when the
@@ -43,7 +43,7 @@ public static class RazorCompiler
     /// template puts those in the project's own file, and mirroring that means a project behaves here
     /// exactly as it does under <c>dotnet build</c>.
     /// </summary>
-    const string DefaultImports =
+    static string DefaultImports(string rootNamespace) =>
         "@using System.Net.Http\n" +
         "@using System.Net.Http.Json\n" +
         "@using Microsoft.AspNetCore.Components.Forms\n" +
@@ -52,7 +52,7 @@ public static class RazorCompiler
         "@using Microsoft.AspNetCore.Components.Web.Virtualization\n" +
         "@using Microsoft.AspNetCore.Components.WebAssembly.Http\n" +
         "@using Microsoft.JSInterop\n" +
-        "@using " + RootNamespace + "\n";
+        "@using " + rootNamespace + "\n";
 
     static readonly string[] CompilerResources =
     {
@@ -121,8 +121,14 @@ public static class RazorCompiler
 
     /// <summary>Generates the C# for every <c>.razor</c> file of a project. They are handed to the
     /// generator together, which is what lets components in different files reference each other
-    /// and <c>@page</c> components register their routes.</summary>
-    public static bool TryGenerate(SourceFile[] files, out List<string> generatedSources, out DiagnosticInfo[] errors)
+    /// and <c>@page</c> components register their routes. <paramref name="cssScopes"/> maps a
+    /// <c>.razor</c> file to the CSS scope its rendered elements should carry.</summary>
+    public static bool TryGenerate(
+        SourceFile[] files,
+        string rootNamespace,
+        IReadOnlyDictionary<string, string> cssScopes,
+        out List<string> generatedSources,
+        out DiagnosticInfo[] errors)
     {
         generatedSources = new List<string>();
         errors = Array.Empty<DiagnosticInfo>();
@@ -146,7 +152,7 @@ public static class RazorCompiler
 
         if (!hasImports)
         {
-            additionalTexts.Add(new RazorAdditionalText(ImportsFileName, DefaultImports));
+            additionalTexts.Add(new RazorAdditionalText(ImportsFileName, DefaultImports(rootNamespace)));
         }
 
         additionalTexts.AddRange(razorFiles.Select(file => (AdditionalText)new RazorAdditionalText(file.Filename, file.Content ?? "")));
@@ -155,7 +161,7 @@ public static class RazorCompiler
             new[] { GetGenerator().AsSourceGenerator() },
             additionalTexts,
             new CSharpParseOptions(LanguageVersion.Latest),
-            new RazorOptionsProvider());
+            new RazorOptionsProvider(rootNamespace, cssScopes));
 
         driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out _, out var diagnostics);
 
@@ -210,23 +216,36 @@ internal sealed class RazorAdditionalText : AdditionalText
 /// <summary>The compile-visible properties and item metadata the Razor generator expects.</summary>
 internal sealed class RazorOptionsProvider : AnalyzerConfigOptionsProvider
 {
-    readonly AnalyzerConfigOptions _global = new ProjectOptions();
+    static readonly IReadOnlyDictionary<string, string> NoScopes = new Dictionary<string, string>();
+
+    readonly AnalyzerConfigOptions _global;
+    readonly IReadOnlyDictionary<string, string> _cssScopes;
+
+    public RazorOptionsProvider(string rootNamespace, IReadOnlyDictionary<string, string> cssScopes)
+    {
+        _global = new ProjectOptions(rootNamespace);
+        _cssScopes = cssScopes ?? NoScopes;
+    }
 
     public override AnalyzerConfigOptions GlobalOptions => _global;
 
     public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) => _global;
 
     public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) =>
-        textFile is RazorAdditionalText file ? new FileOptions(file) : _global;
+        textFile is RazorAdditionalText file ? new FileOptions(file, _cssScopes) : _global;
 
     sealed class ProjectOptions : AnalyzerConfigOptions
     {
+        readonly string _rootNamespace;
+
+        public ProjectOptions(string rootNamespace) => _rootNamespace = rootNamespace;
+
         public override bool TryGetValue(string key, out string value)
         {
             switch (key)
             {
                 case "build_property.RootNamespace":
-                    value = "UserRazor";
+                    value = _rootNamespace;
                     return true;
                 case "build_property.RazorLangVersion":
                     value = "10.0";
@@ -250,8 +269,13 @@ internal sealed class RazorOptionsProvider : AnalyzerConfigOptionsProvider
     sealed class FileOptions : AnalyzerConfigOptions
     {
         readonly RazorAdditionalText _file;
+        readonly IReadOnlyDictionary<string, string> _cssScopes;
 
-        public FileOptions(RazorAdditionalText file) => _file = file;
+        public FileOptions(RazorAdditionalText file, IReadOnlyDictionary<string, string> cssScopes)
+        {
+            _file = file;
+            _cssScopes = cssScopes;
+        }
 
         public override bool TryGetValue(string key, out string value)
         {
@@ -261,6 +285,9 @@ internal sealed class RazorOptionsProvider : AnalyzerConfigOptionsProvider
                 case "build_metadata.AdditionalFiles.TargetPath":
                     value = Convert.ToBase64String(Encoding.UTF8.GetBytes(_file.Path));
                     return true;
+                // Set for a component that has a matching .razor.css, so its elements carry the scope.
+                case "build_metadata.AdditionalFiles.CssScope":
+                    return _cssScopes.TryGetValue(_file.Path, out value);
                 default:
                     value = null;
                     return false;

@@ -132,12 +132,6 @@
         cursor: pointer;
       }
       #stage a { color: var(--accent); }
-      #stage .demo-layout {
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 12px;
-      }
-      #stage .demo-layout nav { display: flex; gap: 14px; margin-bottom: 12px; }
       #stage .plain-layout { border-left: 3px solid var(--accent); padding-left: 12px; }
       #stage code { color: var(--muted); }
       #diagnostics {
@@ -160,7 +154,7 @@
         font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         outline: none;
       }
-      #root { width: 120px; }
+      #root, #namespace { width: 120px; }
       #render {
         background: var(--accent);
         color: #0d0f14;
@@ -216,6 +210,8 @@
       </select>
       <label class="hint" for="root">root component</label>
       <input id="root" value="App" autocomplete="off" spellcheck="false" />
+      <label class="hint" for="namespace">namespace</label>
+      <input id="namespace" value="UserRazor" autocomplete="off" spellcheck="false" />
       <span class="hint">Ctrl/Cmd + Enter to render</span>
     </footer>
 
@@ -269,6 +265,28 @@
 `,
             },
             {
+              filename: 'Layout/MainLayout.razor.css',
+              content: `.demo-layout {
+    border: 1px solid #2c3040;
+    border-left: 4px solid #8b7cf6;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.demo-layout nav {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 12px;
+}
+
+/* The links are rendered by NavLink, so ::deep is needed to reach them. */
+.demo-layout ::deep a {
+    color: #8b7cf6;
+    text-decoration: none;
+}
+`,
+            },
+            {
               filename: 'Layout/PlainLayout.razor',
               content: `@inherits LayoutComponentBase
 
@@ -281,11 +299,14 @@
 
 <h1>Home</h1>
 
+<p><img src="logo.svg" alt="logo" width="40" height="40" /></p>
+
 <p>@Greeting.For("Blazor")</p>
 
 <p>
-    This project mixes <code>.razor</code> with <code>Greeting.cs</code>, and its pages live in a
-    <code>Pages/</code> folder.
+    This project mixes <code>.razor</code> with <code>Greeting.cs</code>, keeps its pages in
+    <code>Pages/</code>, styles itself with <code>MainLayout.razor.css</code>, and serves
+    <code>wwwroot/logo.svg</code>.
 </p>
 `,
             },
@@ -324,6 +345,14 @@ public static class Greeting
 {
     public static string For(string name) => "Hello from C#, " + name + "!";
 }
+`,
+            },
+            {
+              filename: 'wwwroot/logo.svg',
+              content: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <circle cx="32" cy="32" r="30" fill="#8b7cf6" />
+  <path d="M18 42 L32 18 L46 42 Z" fill="#12141a" />
+</svg>
 `,
             },
           ],
@@ -392,6 +421,7 @@ public class Counter : ComponentBase
       var renderButton = document.getElementById('render');
       var codeEl = document.getElementById('code');
       var rootEl = document.getElementById('root');
+      var namespaceEl = document.getElementById('namespace');
       var modeEl = document.getElementById('mode');
       var tabsEl = document.getElementById('file-tabs');
       var routesEl = document.getElementById('routes');
@@ -473,7 +503,11 @@ public class Counter : ComponentBase
         saveActiveFile();
         var started = performance.now();
         try {
-          var result = await runner.renderProject(clone(project.files), rootEl.value.trim());
+          var result = await runner.renderProject(
+            clone(project.files),
+            rootEl.value.trim(),
+            namespaceEl.value.trim(),
+          );
           var elapsed = Math.round(performance.now() - started);
 
           showRoutes(result.routes);

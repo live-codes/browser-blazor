@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.JSInterop;
@@ -15,12 +16,15 @@ public static class BlazorBridge
         PropertyNameCaseInsensitive = true,
     };
 
+    static readonly Dictionary<string, string> NoAssets = new Dictionary<string, string>();
+
     /// <summary>Compiles and renders a project — any mix of <c>.razor</c> markup and C# — with all
     /// files compiled together, so components can reference each other and <c>@page</c> components
-    /// register routes. <paramref name="filesJson"/> is a JSON array of <c>{ name, content }</c>.
-    /// <paramref name="rootType"/> optionally names the component to render.</summary>
+    /// register routes. <paramref name="filesJson"/> is a JSON array of <c>{ filename, content }</c>.
+    /// <paramref name="rootType"/> optionally names the component to render, and
+    /// <paramref name="rootNamespace"/> the project's namespace (folder namespaces hang off it).</summary>
     [JSInvokable]
-    public static Task<string> RenderProject(string filesJson, string rootType)
+    public static Task<string> RenderProject(string filesJson, string rootType, string rootNamespace)
     {
         SourceFile[] files;
         try
@@ -37,30 +41,37 @@ public static class BlazorBridge
             }));
         }
 
-        return Render(() => ComponentCompiler.Compile(files, rootType));
+        var name = string.IsNullOrEmpty(rootNamespace) ? RazorCompiler.DefaultRootNamespace : rootNamespace;
+        return Render(() => ComponentCompiler.Compile(files, rootType, name), ProjectAssets.Collect(files));
     }
 
     /// <summary>Compiles and renders a single component written as C#.</summary>
     [JSInvokable]
     public static Task<string> RenderComponent(string source, string rootType) =>
-        Render(() => ComponentCompiler.Compile(
-            new[] { new SourceFile { Filename = "Components.cs", Content = source ?? "" } },
-            rootType));
+        Render(
+            () => ComponentCompiler.Compile(
+                new[] { new SourceFile { Filename = "Components.cs", Content = source ?? "" } },
+                rootType,
+                RazorCompiler.DefaultRootNamespace),
+            NoAssets);
 
     /// <summary>Compiles and renders a single component written as <c>.razor</c> markup.
     /// <paramref name="componentName"/> names the generated class, and defaults to "App".</summary>
     [JSInvokable]
     public static Task<string> RenderRazor(string source, string componentName) =>
-        Render(() => ComponentCompiler.Compile(
-            new[]
-            {
-                new SourceFile
+        Render(
+            () => ComponentCompiler.Compile(
+                new[]
                 {
-                    Filename = (string.IsNullOrEmpty(componentName) ? "App" : componentName) + ".razor",
-                    Content = source ?? "",
+                    new SourceFile
+                    {
+                        Filename = (string.IsNullOrEmpty(componentName) ? "App" : componentName) + ".razor",
+                        Content = source ?? "",
+                    },
                 },
-            },
-            componentName));
+                componentName,
+                RazorCompiler.DefaultRootNamespace),
+            NoAssets);
 
     /// <summary>Drives the host's NavigationManager, so <c>@page</c> routing can be exercised from
     /// the page.</summary>
@@ -98,7 +109,7 @@ public static class BlazorBridge
     [JSInvokable]
     public static int ReferenceCount() => ReferenceAssemblies.Count;
 
-    static async Task<string> Render(Func<CompileResult> compile)
+    static async Task<string> Render(Func<CompileResult> compile, Dictionary<string, string> assets)
     {
         try
         {
@@ -118,7 +129,7 @@ public static class BlazorBridge
                 });
             }
 
-            await DynamicHost.Current.ShowAsync(result.Type);
+            await DynamicHost.Current.ShowAsync(result.Type, result.Styles);
 
             // A component can compile cleanly and still throw while rendering; the boundary
             // catches that, so report it as a failure rather than a success that rendered nothing.
@@ -131,6 +142,8 @@ public static class BlazorBridge
                     Type = result.Type.FullName,
                     Bytes = result.Bytes,
                     Routes = result.Routes,
+                    Styles = result.Styles,
+                    Assets = assets,
                     Errors = new[] { DiagnosticInfo.Error(renderError.GetType().Name, renderError.Message) },
                 });
             }
@@ -141,6 +154,8 @@ public static class BlazorBridge
                 Type = result.Type.FullName,
                 Bytes = result.Bytes,
                 Routes = result.Routes,
+                Styles = result.Styles,
+                Assets = assets,
                 Errors = Array.Empty<DiagnosticInfo>(),
             });
         }
@@ -165,6 +180,13 @@ public sealed class RenderResult
 
     /// <summary>Route templates declared by the project, for the page to link to.</summary>
     public string[] Routes { get; set; }
+
+    /// <summary>The project's scoped CSS (already rendered alongside the component; reported so a
+    /// consumer can place it itself if it prefers).</summary>
+    public string Styles { get; set; }
+
+    /// <summary>The project's <c>wwwroot/</c> files as data URLs, keyed by their path below it.</summary>
+    public Dictionary<string, string> Assets { get; set; }
 
     public DiagnosticInfo[] Errors { get; set; }
 }

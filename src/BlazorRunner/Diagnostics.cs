@@ -47,6 +47,9 @@ public sealed class CompileResult
     /// <summary>Route templates declared with <c>@page</c>, for the page to link to.</summary>
     public string[] Routes { get; set; }
 
+    /// <summary>The project's scoped CSS, already rewritten, to render alongside the component.</summary>
+    public string Styles { get; set; }
+
     public DiagnosticInfo[] Errors { get; set; }
 }
 

@@ -10,11 +10,13 @@
  *     const runner = BlazorRunner.create();            // defaults to the script's own folder
  *
  *     // A project: any mix of .razor markup and C#, compiled together, so components can
- *     // reference each other and @page components register routes. Filenames may contain folders.
+ *     // reference each other and @page components register routes. Filenames may contain folders;
+ *     // a Name.razor.css scopes Name.razor, and files under wwwroot/ are served as data URLs.
  *     const a = await runner.renderProject([
  *       { filename: 'App.razor', content: '<Router AppAssembly="typeof(App).Assembly">…</Router>' },
  *       { filename: 'Pages/Counter.razor', content: '@page "/counter"\n<button @onclick="Go">@count</button>\n@code { int count; void Go() => count++; }' },
- *     ], 'App');
+ *       { filename: 'Pages/Counter.razor.css', content: 'button { color: red; }' },
+ *     ], 'App', 'MyApp');   // optional: root component, root namespace
  *
  *     // or a single component:
  *     const b = await runner.renderRazor('<h1>Hello</h1>');
@@ -133,9 +135,38 @@
         }
 
         function call(method, args) {
-            return boot().then(function () {
-                return invoke(method, args);
-            }).then(parse);
+            return boot()
+                .then(function () {
+                    return invoke(method, args);
+                })
+                .then(function (json) {
+                    var result = parse(json);
+                    resolveAssets(result);
+                    return result;
+                });
+        }
+
+        // A project's wwwroot/ files come back as data URLs, so point the rendered markup at them.
+        function resolveAssets(result) {
+            var assets = result && result.assets;
+            if (!assets) return;
+
+            var root = document.getElementById('blazor-app');
+            if (!root) return;
+
+            var attributes = ['src', 'href', 'poster'];
+            var elements = root.querySelectorAll('[src], [href], [poster]');
+
+            for (var i = 0; i < elements.length; i++) {
+                for (var j = 0; j < attributes.length; j++) {
+                    var attribute = attributes[j];
+                    var value = elements[i].getAttribute(attribute);
+                    if (!value) continue;
+
+                    var key = value.replace(/^\.\//, '').replace(/^\//, '');
+                    if (assets[key]) elements[i].setAttribute(attribute, assets[key]);
+                }
+            }
         }
 
         return {
@@ -144,9 +175,14 @@
             ready: function () {
                 return boot();
             },
-            /** Compiles and renders a project: a JSON-able array of { filename, content }. */
-            renderProject: function (files, rootComponent) {
-                return call('RenderProject', [JSON.stringify(files || []), rootComponent || '']);
+            /** Compiles and renders a project: a JSON-able array of { filename, content }.
+             *  Files under wwwroot/ are served as data URLs (see resolveAssets). */
+            renderProject: function (files, rootComponent, rootNamespace) {
+                return call('RenderProject', [
+                    JSON.stringify(files || []),
+                    rootComponent || '',
+                    rootNamespace || '',
+                ]);
             },
             /** Compiles and renders a component written as .razor markup. */
             renderRazor: function (source, componentName) {

@@ -17,6 +17,7 @@ public class DynamicHost : ComponentBase
 
     HostErrorBoundary _boundary;
     Type _componentType;
+    string _styles;
     int _renderId;
     TaskCompletionSource<bool> _rendered;
 
@@ -30,8 +31,8 @@ public class DynamicHost : ComponentBase
         _ = InvokeAsync(() => Navigation?.NavigateTo(url));
 
     /// <summary>Renders <paramref name="type"/> on the renderer's dispatcher and waits for the
-    /// render pass to finish.</summary>
-    public async Task ShowAsync(Type type)
+    /// render pass to finish. <paramref name="styles"/> is the project's scoped CSS, if any.</summary>
+    public async Task ShowAsync(Type type, string styles)
     {
         var rendered = new TaskCompletionSource<bool>();
         _rendered = rendered;
@@ -39,6 +40,7 @@ public class DynamicHost : ComponentBase
         await InvokeAsync(() =>
         {
             _componentType = type;
+            _styles = styles;
             // Re-key the boundary so a component that already faulted starts clean.
             _renderId++;
             StateHasChanged();
@@ -58,6 +60,14 @@ public class DynamicHost : ComponentBase
     protected override void BuildRenderTree(RenderTreeBuilder builder)
     {
         var seq = 0;
+
+        // The project's scoped CSS rides along with the component it belongs to.
+        if (!string.IsNullOrEmpty(_styles))
+        {
+            builder.OpenElement(seq++, "style");
+            builder.AddContent(seq++, _styles);
+            builder.CloseElement();
+        }
 
         // Without a boundary, a component that throws while rendering takes down the whole
         // renderer — and with it the page. The boundary contains the damage to this subtree.
