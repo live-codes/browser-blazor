@@ -68,9 +68,10 @@ The package ships `blazor-wasm.js`, a loader that hides the boot sequence (fetch
   // A project: any mix of .razor and C#, compiled together.
   const result = await runner.renderProject(
     [
-      { name: 'App.razor', content: '<Router AppAssembly="typeof(App).Assembly">…</Router>' },
-      { name: 'Home.razor', content: '@page "/"\n<h1>Home</h1>' },
-      { name: 'Counter.razor', content: '@page "/counter"\n<button @onclick="Go">@count</button>\n@code { int count; void Go() => count++; }' },
+      { filename: 'App.razor', content: '<Router AppAssembly="typeof(App).Assembly">…</Router>' },
+      { filename: 'Pages/Home.razor', content: '@page "/"\n<h1>Home</h1>' },
+      { filename: 'Pages/Counter.razor', content: '@page "/counter"\n<button @onclick="Go">@count</button>\n@code { int count; void Go() => count++; }' },
+      { filename: 'Greeting.cs', content: 'public static class Greeting { public static string For(string n) => "Hi " + n; }' },
     ],
     'App',                       // optional: the component to render
   );
@@ -117,7 +118,7 @@ Called from the page with `DotNet.invokeMethodAsync('BlazorRunner', …)`:
 
 | Method | Returns |
 | ------ | ------- |
-| `RenderProject(filesJson, rootType)` | `{ success, type, bytes, routes[], errors[] }` — compiles a project of `{ name, content }` files (`.razor` and/or `.cs`) and renders it. `rootType` optionally names the component to render. |
+| `RenderProject(filesJson, rootType)` | `{ success, type, bytes, routes[], errors[] }` — compiles a project of `{ filename, content }` files (`.razor` and/or `.cs`, in any folders) and renders it. `rootType` optionally names the component to render. |
 | `RenderRazor(source, componentName)` | Same, for a single `.razor` file. `componentName` names the generated class (default `App`). |
 | `RenderComponent(source, rootType)` | Same, for a single C# file. |
 | `NavigateTo(url)` | Drives the host's `NavigationManager`, for `@page` routing. |
@@ -135,6 +136,7 @@ A component that throws *while rendering* comes back as `success: false` with th
 | `DynamicHost.cs` | The fixed root component — renders whatever component was last compiled, via `RenderTreeBuilder.OpenComponent(int, Type)`, inside an error boundary. Also exposes `NavigateTo`. |
 | `HostErrorBoundary.cs` | An `ErrorBoundary` that keeps the exception it caught so the host can report it. |
 | `HostRouter.cs` | Fallback root for projects with `@page` components but no component to host them: routes over the compiled assembly. |
+| `HostLayout.cs` | The default layout for routed pages when neither the page nor the router names one. |
 | `RazorCompiler.cs` | Drives the SDK's Razor source generator to turn `.razor` into C#. |
 | `CSharpInProcess.cs` | Shared compile path: parse → `CSharpCompilation.Create` → `Emit` → `Assembly.Load`. |
 | `ComponentCompiler.cs` | Project compilation and root-component resolution. |
@@ -154,6 +156,10 @@ A component that throws *while rendering* comes back as `success: false` with th
 - **A project compiles into one assembly.** Every file is fed to the Razor generator together and all
   the generated C# goes into a single `CSharpCompilation`, which is what lets components in different
   files reference each other.
+- **Files may sit in folders.** `Pages/Home.razor` becomes `UserRazor.Pages.Home` — the Razor
+  generator derives the namespace from the folder — so the namespaces it emits are read back out of
+  the generated code and imported with `global using`. That way any component can use any other
+  without an `@using`, whatever folder it is in.
 - **The user's component runs on the app's own renderer.** `DynamicHost` keeps the compiled `Type` and
   opens it as a child component, so it joins the real Blazor render tree — `@onclick` handlers,
   `StateHasChanged`, `[Inject]`, parameters and lifecycle all work.
@@ -162,6 +168,9 @@ A component that throws *while rendering* comes back as `success: false` with th
   components and no `App`, `HostRouter` routes over the compiled assembly instead. Navigation goes
   through the host's `NavigationManager`, so it is real client-side routing (the URL changes, and a
   reload works because `serve.js` falls back to `index.html`).
+- **Layouts work.** Routed pages render through `RouteView`, so a page's `@layout` is honoured (and
+  `LayoutComponentBase`/`@Body` behave as usual); `RouteView` also takes a `DefaultLayout`, which a
+  project sets in its `App.razor`. When nothing names a layout, `HostRouter` supplies `HostLayout`.
 - **Razor is compiled by the real Razor compiler.** There is no standalone Razor library any more, so
   `RazorCompiler` drives the SDK's incremental generator
   (`Microsoft.NET.Sdk.Razor.SourceGenerators.RazorSourceGenerator`) through a `CSharpGeneratorDriver`,
@@ -201,11 +210,16 @@ A component that throws *while rendering* comes back as `success: false` with th
 
 Checked in a real browser (headless Chrome via CDP), against the packaged output:
 
-- **multi-file Razor project**: `App.razor` + `Home.razor` + `Counter.razor` compile together
-  (`rendered UserRazor.App`) with the routes reported as `['/', '/counter']`;
-- **routing**: navigating to `/counter` renders that page (URL becomes `/counter`), the routed page's
-  `@onclick` counter works, and opening `/counter` directly renders the same page;
-- **C# project**: the same playground in C# mode renders (`rendered App`, `bytes` reported);
+- **multi-file Razor project**: seven files — `App.razor`, two layouts, `Pages/Home.razor`,
+  `Pages/Counter.razor`, `Pages/About.razor` and a C# file `Greeting.cs` — compile together
+  (`rendered UserRazor.App`), with routes reported as `['/', '/about', '/counter']`;
+- **mixing and folders**: the Home page calls into `Greeting.cs`, and the `Pages/` folder is both
+  routed and usable from the root-level layouts;
+- **layouts**: Home and About render inside `MainLayout` (its nav bar is present), while Counter
+  renders through its own `@layout PlainLayout` (no nav);
+- **routing**: navigating to `/counter` renders that page (URL becomes `/counter`) and its counter
+  increments, and opening `/about` directly renders that page;
+- **C# project**: three files (`App.cs`, `Counter.cs`, `Greeting.cs`) render together;
 - **console**: `run` returns `{ success: true, output: "console works" }`;
 - a Razor error is reported against the **markup** line (`CS0029: … (line 4)`);
 - a component that throws while rendering is contained — the page stays alive, the next render
@@ -227,8 +241,9 @@ Checked in a real browser (headless Chrome via CDP), against the packaged output
   content-hashed `BlazorRunner.<hash>.wasm` behind — ~12 MB of dead weight each time, with only one
   referenced. `make-package.ps1` always publishes into a fresh staging directory and asserts a single
   assembly.
-- **One project per render.** There is no project-wide build step, layouts are not wired to `@page`
-  components by default, and nested `@page` parameters (`/{id:int}`) work but are untested here.
+- **One project per render.** There is no project-wide build step and no static assets (CSS or
+  images); nested `@page` parameters (`/{id:int}`) transpile but are untested here. `bin/` and `obj/`
+  are build output and are not tracked — `package/` and `src/BlazorRunner/refs/` are.
 - **Per-render leakage is negligible.** Each render loads a new assembly into the default load
   context, but a compiled project is only a few KB.
 
@@ -253,7 +268,7 @@ What that costs, so it is a deliberate choice:
 
 - **Wire into LiveCodes** (deliberately not done yet): point the C# language and a new `blazor-wasm`
   language at this package, per [Reusing it for C#](#reusing-it-for-c).
-- **Layouts** — honour `@layout`/`DefaultLayout` when routing, and surface `@page` parameters.
+- **Route parameters** — `@page "/item/{id:int}"` transpiles; the matched values are untested.
 - **Revisit Roslyn 5.9.** The pin to 4.14 is what makes Roslyn run under wasm; if that is fixed there,
   the embed-and-load dance could be replaced by a plain reference.
 - **Shrink the bundle** — the untrimmed runtime and the embedded reference assemblies dominate.
