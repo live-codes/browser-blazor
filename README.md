@@ -318,8 +318,12 @@ language and Blazor from one copy of Roslyn, the .NET runtime and the BCL refere
 
 What that costs, so it is a deliberate choice:
 
-- **Size.** One ~49 MB bundle instead of `csharp-wasm`'s ~40 MB. Two bundles would be ~40 + ~49 MB, so
-  consolidation wins as soon as Blazor is used at all.
+- **Size.** For a console program this bundle downloads ~16.4 MB (brotli) against ~13.8 MB for
+  `csharp-wasm@1.0.3` — measured on jsDelivr: 84 files, 35.5 MB decoded. So ~19% more, buying the
+  untrimmed BCL + ASP.NET Core and the Blazor host, which is what lets the same bundle render
+  components as well. Shipping both bundles would cost ~13.8 + ~16.4 MB, so consolidation wins as soon
+  as Blazor is used at all. The one avoidable part is `refs.zip`: deflated it is 5.3 MB, where brotli
+  over the raw DLLs would be 4.9 MB — a CDN compresses better than a zip that got there first.
 - **LiveCodes glue, when we get there.** The `csharp-wasm` script hard-codes the `MyRunnyApp` assembly
   name and its bundle URL is pinned in `vendors.ts`; both would point here. The result shape also
   differs slightly — this bundle returns `errors` as an array of diagnostics where the current code
