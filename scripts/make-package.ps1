@@ -106,12 +106,33 @@ foreach ($required in @("refs.zip", "razor.zip")) {
     if (-not (Test-Path (Join-Path $package $required))) { throw "Package is missing $required" }
 }
 
+# npm renders the README on the package page and expects the licence to travel with the code, so
+# both are copied in: the publishable directory is the package root, not the repository root.
+Copy-Item (Join-Path $root "README.md") (Join-Path $package "README.md") -Force
+Copy-Item (Join-Path $root "LICENSE") (Join-Path $package "LICENSE") -Force
+
+# No main/exports: this is a static asset bundle, loaded by URL (a <script src> or LiveCodes'
+# compiler.scripts), not imported as a module — blazor-wasm.js is a browser-only IIFE.
 @{
     name = "@live-codes/blazor-wasm"
     version = $Version
     description = "Run C# and render Blazor components in the browser, with no server."
     license = "MIT"
+    author = "Hatem Hosny"
+    keywords = @(
+        "blazor",
+        "razor",
+        "csharp",
+        "dotnet",
+        "webassembly",
+        "wasm",
+        "roslyn",
+        "playground",
+        "livecodes"
+    )
     repository = @{ type = "git"; url = "https://github.com/live-codes/browser-blazor" }
+    homepage = "https://github.com/live-codes/browser-blazor#readme"
+    bugs = @{ url = "https://github.com/live-codes/browser-blazor/issues" }
 } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $package "package.json")
 
 $files = Get-ChildItem $package -Recurse -File

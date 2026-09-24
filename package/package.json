@@ -1,10 +1,26 @@
 ﻿{
-    "license":  "MIT",
+    "homepage":  "https://github.com/live-codes/browser-blazor#readme",
     "description":  "Run C# and render Blazor components in the browser, with no server.",
+    "version":  "0.1.0-next.0",
+    "author":  "Hatem Hosny",
     "name":  "@live-codes/blazor-wasm",
-    "version":  "0.1.0",
+    "keywords":  [
+                     "blazor",
+                     "razor",
+                     "csharp",
+                     "dotnet",
+                     "webassembly",
+                     "wasm",
+                     "roslyn",
+                     "playground",
+                     "livecodes"
+                 ],
     "repository":  {
                        "type":  "git",
                        "url":  "https://github.com/live-codes/browser-blazor"
-                   }
+                   },
+    "license":  "MIT",
+    "bugs":  {
+                 "url":  "https://github.com/live-codes/browser-blazor/issues"
+             }
 }
