@@ -28,6 +28,13 @@ public sealed class DiagnosticInfo
         new DiagnosticInfo { Id = id, Message = message, Severity = "Error" };
 }
 
+/// <summary>One source file of a project, as sent from the page.</summary>
+public sealed class SourceFile
+{
+    public string Name { get; set; }
+    public string Content { get; set; }
+}
+
 /// <summary>Result of compiling a component: the resolved root type, or the errors.</summary>
 public sealed class CompileResult
 {
@@ -35,6 +42,9 @@ public sealed class CompileResult
 
     /// <summary>Size of the emitted assembly, for reporting.</summary>
     public int Bytes { get; set; }
+
+    /// <summary>Route templates declared with <c>@page</c>, for the page to link to.</summary>
+    public string[] Routes { get; set; }
 
     public DiagnosticInfo[] Errors { get; set; }
 }

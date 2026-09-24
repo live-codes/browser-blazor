@@ -12,19 +12,64 @@ public static class BlazorBridge
     static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
     };
 
-    /// <summary>Compiles and renders a component written as C#. <paramref name="rootType"/> is an
-    /// optional component name; when empty the component named "App" is used, else the first.</summary>
+    /// <summary>Compiles and renders a project — any mix of <c>.razor</c> markup and C# — with all
+    /// files compiled together, so components can reference each other and <c>@page</c> components
+    /// register routes. <paramref name="filesJson"/> is a JSON array of <c>{ name, content }</c>.
+    /// <paramref name="rootType"/> optionally names the component to render.</summary>
+    [JSInvokable]
+    public static Task<string> RenderProject(string filesJson, string rootType)
+    {
+        SourceFile[] files;
+        try
+        {
+            files = JsonSerializer.Deserialize<SourceFile[]>(filesJson ?? "[]", JsonOptions)
+                ?? Array.Empty<SourceFile>();
+        }
+        catch (JsonException ex)
+        {
+            return Task.FromResult(Serialize(new RenderResult
+            {
+                Success = false,
+                Errors = new[] { DiagnosticInfo.Error("JSON", ex.Message) },
+            }));
+        }
+
+        return Render(() => ComponentCompiler.Compile(files, rootType));
+    }
+
+    /// <summary>Compiles and renders a single component written as C#.</summary>
     [JSInvokable]
     public static Task<string> RenderComponent(string source, string rootType) =>
-        Render(() => ComponentCompiler.Compile(source, rootType));
+        Render(() => ComponentCompiler.Compile(
+            new[] { new SourceFile { Name = "Components.cs", Content = source ?? "" } },
+            rootType));
 
-    /// <summary>Compiles and renders a component written as <c>.razor</c> markup.
+    /// <summary>Compiles and renders a single component written as <c>.razor</c> markup.
     /// <paramref name="componentName"/> names the generated class, and defaults to "App".</summary>
     [JSInvokable]
     public static Task<string> RenderRazor(string source, string componentName) =>
-        Render(() => ComponentCompiler.CompileRazor(source, componentName));
+        Render(() => ComponentCompiler.Compile(
+            new[]
+            {
+                new SourceFile
+                {
+                    Name = (string.IsNullOrEmpty(componentName) ? "App" : componentName) + ".razor",
+                    Content = source ?? "",
+                },
+            },
+            componentName));
+
+    /// <summary>Drives the host's NavigationManager, so <c>@page</c> routing can be exercised from
+    /// the page.</summary>
+    [JSInvokable]
+    public static Task NavigateTo(string url)
+    {
+        DynamicHost.Current?.NavigateTo(url ?? "/");
+        return Task.CompletedTask;
+    }
 
     /// <summary>Compiles and runs a C# console program, capturing stdout. Returns
     /// <c>{ success, output, errors[] }</c> — the same field names the LiveCodes
@@ -85,6 +130,7 @@ public static class BlazorBridge
                     Success = false,
                     Type = result.Type.FullName,
                     Bytes = result.Bytes,
+                    Routes = result.Routes,
                     Errors = new[] { DiagnosticInfo.Error(renderError.GetType().Name, renderError.Message) },
                 });
             }
@@ -94,6 +140,7 @@ public static class BlazorBridge
                 Success = true,
                 Type = result.Type.FullName,
                 Bytes = result.Bytes,
+                Routes = result.Routes,
                 Errors = Array.Empty<DiagnosticInfo>(),
             });
         }
@@ -115,5 +162,9 @@ public sealed class RenderResult
     public bool Success { get; set; }
     public string Type { get; set; }
     public int Bytes { get; set; }
+
+    /// <summary>Route templates declared by the project, for the page to link to.</summary>
+    public string[] Routes { get; set; }
+
     public DiagnosticInfo[] Errors { get; set; }
 }

@@ -9,22 +9,29 @@
  *   <script>
  *     const runner = BlazorRunner.create();            // defaults to the script's own folder
  *
- *     // Razor markup (a component named App by default):
- *     const a = await runner.renderRazor('<h1>Hello</h1><button @onclick="Go">Go</button>@code { void Go() {} }');
+ *     // A project: any mix of .razor markup and C#, compiled together, so components can
+ *     // reference each other and @page components register routes.
+ *     const a = await runner.renderProject([
+ *       { name: 'App.razor', content: '<Router AppAssembly="typeof(App).Assembly">…</Router>' },
+ *       { name: 'Counter.razor', content: '@page "/counter"\n<button @onclick="Go">@count</button>\n@code { int count; void Go() => count++; }' },
+ *     ], 'App');
  *
- *     // or a component written in C#:
- *     const b = await runner.render('public class App : ComponentBase { ... }');
+ *     // or a single component:
+ *     const b = await runner.renderRazor('<h1>Hello</h1>');
  *
  *     // or a console program:
  *     const c = await runner.run('using System; class P { static void Main() { Console.WriteLine("hi"); } }');
  *   </script>
  *
  * Every call returns a plain object:
- *   render / renderRazor -> { success, type, bytes, errors[] }
- *   run                  -> { success, output, errors[] }
+ *   renderProject / render / renderRazor -> { success, type, bytes, routes[], errors[] }
+ *   run                                  -> { success, output, errors[] }
  * and each diagnostic is { id, message, severity, line, column }.
  *
- * A component is rendered into the element with id `blazor-app`, so give the page one:
+ * With @page components, renderProject's `routes` lists them; navigate with
+ * `runner.navigateTo('/counter')`.
+ *
+ * Whatever a project renders into is the element with id `blazor-app`, so give the page one:
  *   <div id="blazor-app"></div>
  */
 (function (global) {
@@ -137,6 +144,10 @@
             ready: function () {
                 return boot();
             },
+            /** Compiles and renders a project: a JSON-able array of { name, content }. */
+            renderProject: function (files, rootComponent) {
+                return call('RenderProject', [JSON.stringify(files || []), rootComponent || '']);
+            },
             /** Compiles and renders a component written as .razor markup. */
             renderRazor: function (source, componentName) {
                 return call('RenderRazor', [source || '', componentName || '']);
@@ -144,6 +155,10 @@
             /** Compiles and renders a component written as C#. */
             render: function (source, componentName) {
                 return call('RenderComponent', [source || '', componentName || '']);
+            },
+            /** Drives the host's navigation, for @page routing. */
+            navigateTo: function (url) {
+                return call('NavigateTo', [url || '/']);
             },
             /** Compiles and runs a console program, capturing stdout. */
             run: function (source, stdin) {

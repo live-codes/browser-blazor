@@ -33,6 +33,22 @@ http
     }
     fs.readFile(filePath, (err, data) => {
       if (err) {
+        // Single-page-app fallback: a routed path such as /counter has no file of its own, so hand
+        // back the app and let Blazor's Router deal with it.
+        if (path.extname(filePath) === '') {
+          fs.readFile(path.join(root, 'index.html'), (indexErr, indexData) => {
+            if (indexErr) {
+              res.writeHead(404).end('not found: ' + urlPath);
+              return;
+            }
+            res.writeHead(200, {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Cache-Control': 'no-store',
+            });
+            res.end(indexData);
+          });
+          return;
+        }
         res.writeHead(404).end('not found: ' + urlPath);
         return;
       }

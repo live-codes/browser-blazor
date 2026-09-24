@@ -1,7 +1,7 @@
 # browser-blazor
 
-Run **C# and live Blazor components in the browser with no server** — components written in
-**Razor markup or C#**, compiled in the page and rendered on Blazor's real renderer.
+Run **C# and live Blazor projects in the browser with no server** — multi-file projects of Razor
+markup and C#, with `@page` routing, compiled in the page and rendered on Blazor's real renderer.
 
 - **`bundle-poc.html`** — step 1: runs C# in the page with the existing
   [`@seth0x41/csharp-wasm`](https://www.npmjs.com/package/@seth0x41/csharp-wasm) bundle. It works,
@@ -25,9 +25,10 @@ powershell -ExecutionPolicy Bypass -File scripts\make-package.ps1 -Version 0.1.0
 node serve.js package 8160          # http://localhost:8160/
 ```
 
-The playground has a component editor on the left and the live result on the right. Pick **Razor** or
-**C#**, edit, and press **Render** (or Ctrl/Cmd + Enter). The **component name** box names the
-generated class (default `App`).
+The playground edits a **project**: the file tabs across the top of the editor hold any mix of
+`.razor` and `.cs` (`+` / `×` to add and remove), the live result is on the right, and the routes the
+project declares appear as chips in its header. Pick **Razor** or **C#**, edit, and press **Render**
+(or Ctrl/Cmd + Enter).
 
 For quick iteration, `dotnet publish src\BlazorRunner -c Release -o src\BlazorRunner\dist` then serve
 `src\BlazorRunner\dist\wwwroot` — but always publish into a **clean** directory, and be aware that a
@@ -64,16 +65,29 @@ The package ships `blazor-wasm.js`, a loader that hides the boot sequence (fetch
 <script>
   const runner = BlazorRunner.create();            // defaults to the script's own folder
 
-  const a = await runner.renderRazor('<h1>Hello</h1>');      // Razor markup
-  const b = await runner.render('public class App : ComponentBase { /* ... */ }');   // C#
-  const c = await runner.run('using System; class P { static void Main() => Console.WriteLine("hi"); }');
+  // A project: any mix of .razor and C#, compiled together.
+  const result = await runner.renderProject(
+    [
+      { name: 'App.razor', content: '<Router AppAssembly="typeof(App).Assembly">…</Router>' },
+      { name: 'Home.razor', content: '@page "/"\n<h1>Home</h1>' },
+      { name: 'Counter.razor', content: '@page "/counter"\n<button @onclick="Go">@count</button>\n@code { int count; void Go() => count++; }' },
+    ],
+    'App',                       // optional: the component to render
+  );
+  // result.routes -> ['/', '/counter']
+
+  await runner.navigateTo('/counter');               // drive @page routing
+
+  const single = await runner.renderRazor('<h1>Hello</h1>');        // one .razor component
+  const asCSharp = await runner.render('public class App : ComponentBase { /* ... */ }');
+  const console = await runner.run('using System; class P { static void Main() => Console.WriteLine("hi"); }');
 </script>
 ```
 
-`render` / `renderRazor` resolve to `{ success, type, bytes, errors[] }` and `run` to
-`{ success, output, errors[] }`; every diagnostic is `{ id, message, severity, line, column }`. Pass
-`{ baseUrl, onProgress }` to `create` to point at a different copy or report download progress. The
-playground (`wwwroot/index.html`) uses this same loader.
+`renderProject` / `render` / `renderRazor` resolve to `{ success, type, bytes, routes[], errors[] }`
+and `run` to `{ success, output, errors[] }`; every diagnostic is
+`{ id, message, severity, line, column }`. Pass `{ baseUrl, onProgress }` to `create` to point at a
+different copy or report download progress. The playground uses this same loader.
 
 ## Step 1 — findings
 
@@ -103,8 +117,10 @@ Called from the page with `DotNet.invokeMethodAsync('BlazorRunner', …)`:
 
 | Method | Returns |
 | ------ | ------- |
-| `RenderRazor(source, componentName)` | `{ success, type, bytes, errors[] }` — compiles `.razor` markup and renders it. `componentName` names the generated class (default `App`). |
-| `RenderComponent(source, rootType)` | `{ success, type, bytes, errors[] }` — same, for a component written in C#. `rootType` is an optional component name; when empty the component named `App` is used, else the first. |
+| `RenderProject(filesJson, rootType)` | `{ success, type, bytes, routes[], errors[] }` — compiles a project of `{ name, content }` files (`.razor` and/or `.cs`) and renders it. `rootType` optionally names the component to render. |
+| `RenderRazor(source, componentName)` | Same, for a single `.razor` file. `componentName` names the generated class (default `App`). |
+| `RenderComponent(source, rootType)` | Same, for a single C# file. |
+| `NavigateTo(url)` | Drives the host's `NavigationManager`, for `@page` routing. |
 | `RunCode(source, stdin)` | `{ success, output, errors[] }` — compiles and runs a console program, capturing stdout. |
 | `ReferenceCount()` | number of embedded reference assemblies. |
 
@@ -116,26 +132,36 @@ A component that throws *while rendering* comes back as `success: false` with th
 | File | Role |
 | ---- | ---- |
 | `Program.cs` | Builds the host; mounts the root component at `#blazor-app`; loads the embedded reference assemblies. |
-| `DynamicHost.cs` | The fixed root component — renders whatever component was last compiled, via `RenderTreeBuilder.OpenComponent(int, Type)`, inside an error boundary. |
+| `DynamicHost.cs` | The fixed root component — renders whatever component was last compiled, via `RenderTreeBuilder.OpenComponent(int, Type)`, inside an error boundary. Also exposes `NavigateTo`. |
 | `HostErrorBoundary.cs` | An `ErrorBoundary` that keeps the exception it caught so the host can report it. |
+| `HostRouter.cs` | Fallback root for projects with `@page` components but no component to host them: routes over the compiled assembly. |
 | `RazorCompiler.cs` | Drives the SDK's Razor source generator to turn `.razor` into C#. |
 | `CSharpInProcess.cs` | Shared compile path: parse → `CSharpCompilation.Create` → `Emit` → `Assembly.Load`. |
-| `ComponentCompiler.cs` | Razor/C# component compilation and root-component selection. |
+| `ComponentCompiler.cs` | Project compilation and root-component resolution. |
 | `ConsoleRunner.cs` | Console mode: entry point invocation with `Console` captured. |
 | `ReferenceAssemblies.cs` | The embedded BCL + ASP.NET Core reference assemblies. |
-| `Diagnostics.cs` | `DiagnosticInfo` / `CompileResult` / `RunResult`. |
+| `Diagnostics.cs` | `DiagnosticInfo` / `SourceFile` / `CompileResult` / `RunResult`. |
 | `BlazorBridge.cs` | The `[JSInvokable]` surface. |
 | `wwwroot/blazor-wasm.js` | The loader shipped in the package. |
 | `wwwroot/index.html` | The playground page. |
+| `../../serve.js` | Static server with an SPA fallback, so routed paths such as `/counter` load the app. |
 | `../../scripts/prepare-refs.ps1` | Copies the reference assemblies into `refs/`. |
 | `../../scripts/make-package.ps1` | Publishes and assembles `package/`. |
 | `../../prototype/RazorProto` | Desktop spike for the Razor generator — seconds per iteration instead of a wasm publish. |
 
 ### How it works
 
+- **A project compiles into one assembly.** Every file is fed to the Razor generator together and all
+  the generated C# goes into a single `CSharpCompilation`, which is what lets components in different
+  files reference each other.
 - **The user's component runs on the app's own renderer.** `DynamicHost` keeps the compiled `Type` and
   opens it as a child component, so it joins the real Blazor render tree — `@onclick` handlers,
   `StateHasChanged`, `[Inject]`, parameters and lifecycle all work.
+- **Routing is Blazor's own.** `@page` becomes a `[Route]` attribute, and the routes are reported back
+  to the page. A project can bring its own `App.razor` with a `<Router>`; if it declares `@page`
+  components and no `App`, `HostRouter` routes over the compiled assembly instead. Navigation goes
+  through the host's `NavigationManager`, so it is real client-side routing (the URL changes, and a
+  reload works because `serve.js` falls back to `index.html`).
 - **Razor is compiled by the real Razor compiler.** There is no standalone Razor library any more, so
   `RazorCompiler` drives the SDK's incremental generator
   (`Microsoft.NET.Sdk.Razor.SourceGenerators.RazorSourceGenerator`) through a `CSharpGeneratorDriver`,
@@ -145,14 +171,12 @@ A component that throws *while rendering* comes back as `success: false` with th
   - and, on each additional file, `build_metadata.AdditionalFiles.TargetPath` — which the SDK
     **base64-encodes**. Omit it and the generator quietly skips component directives, so `@onclick`
     comes out as literal markup instead of an event handler.
-
-  The generated C# then goes through the same Roslyn path as a hand-written component.
 - **The Razor compiler is loaded from embedded bytes, not referenced.** Two reasons, both learned the
   hard way:
   1. **Roslyn 5.9 aborts the WebAssembly runtime.** It is what the Razor compiler asks for, and what
      the SDK ships — but any compilation with it dies with `Program terminated with exit(1)`. Roslyn
-     4.14 works. So the app pins 4.14 and the Razor compiler binds against it by simple name (Mono
-     ignores version mismatches for this).
+     4.14 works. So the app pins 4.14, and the Razor compiler binds against it by simple name (Mono
+     ignores the version mismatch here).
   2. **An assembly reference drags Roslyn 5.9 back in.** Referencing the SDK's Razor compiler makes
      MSBuild resolve *its* Roslyn dependency from the SDK and publish it, undoing the pin. Embedding
      the DLLs and loading them with `Assembly.Load(bytes)` avoids that entirely.
@@ -160,12 +184,12 @@ A component that throws *while rendering* comes back as `success: false` with th
   A byte-loaded assembly is not discoverable by name, so the compiler's own dependency on
   `Microsoft.AspNetCore.Razor.Utilities.Shared` is resolved through an
   `AssemblyLoadContext.Default.Resolving` hook.
-- **A throwing component cannot take the renderer down.** `DynamicHost` renders the user's component
-  inside a `HostErrorBoundary`; rendering also waits for the pass to complete, so a render-time
-  exception becomes a reported diagnostic instead of a blank area and a bogus success.
+- **A throwing component cannot take the renderer down.** `DynamicHost` renders inside a
+  `HostErrorBoundary`; rendering also waits for the pass to complete, so a render-time exception
+  becomes a reported diagnostic instead of a blank area and a bogus success.
 - **Reference assemblies are embedded**, not fetched: `prepare-refs.ps1` copies 307 DLLs (11.7 MB)
-  from `Microsoft.NETCore.App.Ref` and `Microsoft.AspNetCore.App.Ref` into `refs/`, and the csproj
-  embeds them as `lib.*` resources.
+  from `Microsoft.NETCore.App.Ref` and `Microsoft.AspNetCore.App.Ref` into `refs/`, embedded as
+  `lib.*` resources.
 - **`PublishTrimmed=false`** — the compiled user assembly resolves against the full BCL and ASP.NET
   Core at runtime, so nothing may be linked away.
 - **A fresh assembly identity per compile** (`User_<guid>`) — two assemblies with the same name in the
@@ -177,11 +201,12 @@ A component that throws *while rendering* comes back as `success: false` with th
 
 Checked in a real browser (headless Chrome via CDP), against the packaged output:
 
-- **Razor**: the sample markup compiles in-page (`rendered UserRazor.App`) and its `@onclick` handler
-  increments a counter (0 → 1) — the markup really became a live component;
-- **C#**: the same playground in C# mode renders (`rendered App`, `bytes: 2560`);
+- **multi-file Razor project**: `App.razor` + `Home.razor` + `Counter.razor` compile together
+  (`rendered UserRazor.App`) with the routes reported as `['/', '/counter']`;
+- **routing**: navigating to `/counter` renders that page (URL becomes `/counter`), the routed page's
+  `@onclick` counter works, and opening `/counter` directly renders the same page;
+- **C# project**: the same playground in C# mode renders (`rendered App`, `bytes` reported);
 - **console**: `run` returns `{ success: true, output: "console works" }`;
-- the loader drives all three entry points;
 - a Razor error is reported against the **markup** line (`CS0029: … (line 4)`);
 - a component that throws while rendering is contained — the page stays alive, the next render
   recovers, and the UI reports `InvalidOperationException: boom from the component`;
@@ -192,8 +217,8 @@ Checked in a real browser (headless Chrome via CDP), against the packaged output
 - **Bundle size.** ~58 MB in `package/` (238 files): ~36 MB the .NET + ASP.NET Core runtime, ~9 MB
   Roslyn, ~4 MB the Razor compiler, ~16 MB the app assembly with the embedded reference assemblies and
   the Razor compiler DLLs.
-- **First Razor compile is slow** (~3.5–4.5 s vs ~1.1 s for C#) while the Razor generator warms up.
-  Warm renders are tens of milliseconds.
+- **First Razor compile is slow** (~4–5 s vs ~0.2 s for C#) while the Razor generator warms up. Warm
+  renders are tens of milliseconds.
 - **Stale `obj/` silently keeps an old package.** A `PackageReference` version change does not always
   re-restore; the build then keeps publishing the previous assembly, which looks like "the change had
   no effect". Delete `obj/` when changing package versions and confirm the shipped
@@ -202,11 +227,10 @@ Checked in a real browser (headless Chrome via CDP), against the packaged output
   content-hashed `BlazorRunner.<hash>.wasm` behind — ~12 MB of dead weight each time, with only one
   referenced. `make-package.ps1` always publishes into a fresh staging directory and asserts a single
   assembly.
-- **One component per render.** A single file (and a single generated class); there is no
-  multi-file/multi-component project, and no `@page` routing.
+- **One project per render.** There is no project-wide build step, layouts are not wired to `@page`
+  components by default, and nested `@page` parameters (`/{id:int}`) work but are untested here.
 - **Per-render leakage is negligible.** Each render loads a new assembly into the default load
-  context, but a compiled component is only ~3 KB, so this is not worth an unloadable
-  `AssemblyLoadContext` yet.
+  context, but a compiled project is only a few KB.
 
 ## Reusing it for C#
 
@@ -229,8 +253,7 @@ What that costs, so it is a deliberate choice:
 
 - **Wire into LiveCodes** (deliberately not done yet): point the C# language and a new `blazor-wasm`
   language at this package, per [Reusing it for C#](#reusing-it-for-c).
-- **Revisit Roslyn 5.9.** The pin to 4.14 is what makes Roslyn run under wasm; if 5.9 is fixed there,
+- **Layouts** — honour `@layout`/`DefaultLayout` when routing, and surface `@page` parameters.
+- **Revisit Roslyn 5.9.** The pin to 4.14 is what makes Roslyn run under wasm; if that is fixed there,
   the embed-and-load dance could be replaced by a plain reference.
-- **Multi-component files** for Razor — several `.razor` sources — just needs the generator to be fed
-  more additional files (it already supports it).
 - **Shrink the bundle** — the untrimmed runtime and the embedded reference assemblies dominate.

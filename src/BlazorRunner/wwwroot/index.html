@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Blazor component playground</title>
+    <title>Blazor project playground</title>
     <base href="/" />
     <style>
       :root {
@@ -71,6 +71,39 @@
         text-transform: uppercase;
         letter-spacing: 0.06em;
         color: var(--muted);
+        min-height: 38px;
+      }
+      .file-bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+      }
+      .file-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+      .tab, .icon-button {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 3px 10px;
+        font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        cursor: pointer;
+      }
+      .tab.active { color: var(--text); border-color: var(--accent); }
+      .icon-button { padding: 3px 8px; }
+      .icon-button:disabled { opacity: 0.4; cursor: default; }
+      .route-chip {
+        background: transparent;
+        color: var(--accent);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 2px 10px;
+        font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-transform: none;
+        letter-spacing: 0;
+        cursor: pointer;
       }
       #code {
         flex: 1;
@@ -80,7 +113,7 @@
         background: transparent;
         color: var(--text);
         font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        min-height: 280px;
+        min-height: 260px;
         resize: none;
         outline: none;
         tab-size: 4;
@@ -98,6 +131,7 @@
         font-weight: 600;
         cursor: pointer;
       }
+      #stage a { color: var(--accent); }
       #diagnostics {
         padding: 10px 12px;
         border-top: 1px solid var(--border);
@@ -135,23 +169,31 @@
   </head>
   <body>
     <header>
-      <h1>Blazor component playground</h1>
+      <h1>Blazor project playground</h1>
       <span class="subtitle"
-        >write a component in Razor or C# — it is compiled in this page and rendered on the real
-        Blazor renderer, no server</span
+        >a multi-file project of Razor and C# — compiled in this page, rendered on the real Blazor
+        renderer, no server</span
       >
       <span id="status">starting…</span>
     </header>
 
     <main>
       <section>
-        <div class="section-head"><span id="file-name">Component.razor</span></div>
+        <div class="section-head"><span>Project files</span></div>
+        <div class="file-bar">
+          <div class="file-tabs" id="file-tabs"></div>
+          <button class="icon-button" id="add-file" title="New file">+</button>
+          <button class="icon-button" id="remove-file" title="Delete this file">×</button>
+        </div>
         <textarea id="code" spellcheck="false"></textarea>
       </section>
       <section>
-        <div class="section-head"><span>Rendered component</span></div>
+        <div class="section-head">
+          <span>Rendered project</span>
+          <span class="file-tabs" id="routes" style="margin-left: auto"></span>
+        </div>
         <div id="stage">
-          <!-- The rendered component mounts here. -->
+          <!-- Whatever the project renders mounts here. -->
           <div id="blazor-app"></div>
         </div>
         <pre id="diagnostics"></pre>
@@ -160,86 +202,183 @@
 
     <footer>
       <button id="render" disabled>Render</button>
-      <select id="language">
-        <option value="razor">Razor</option>
-        <option value="csharp">C#</option>
+      <select id="mode">
+        <option value="razor">Razor project</option>
+        <option value="csharp">C# project</option>
       </select>
-      <label class="hint" for="root">component name</label>
+      <label class="hint" for="root">root component</label>
       <input id="root" value="App" autocomplete="off" spellcheck="false" />
       <span class="hint">Ctrl/Cmd + Enter to render</span>
     </footer>
 
     <script src="blazor-wasm.js"></script>
     <script>
-      var SAMPLES = {
-        razor: [
-          '<h1>Hello from Razor</h1>',
-          '',
-          '<p>You clicked <strong>@count</strong> times.</p>',
-          '',
-          '<button @onclick="Increment">Click me</button>',
-          '',
-          '@code {',
-          '    int count;',
-          '',
-          '    void Increment() => count++;',
-          '}',
-          '',
-        ].join('\n'),
+      var DEFAULT_PROJECTS = {
+        razor: {
+          files: [
+            {
+              name: 'App.razor',
+              content: `<Router AppAssembly="typeof(App).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" />
+    </Found>
+    <NotFound>
+        <p>No component matches this route.</p>
+    </NotFound>
+</Router>
+`,
+            },
+            {
+              name: 'Home.razor',
+              content: `@page "/"
 
-        csharp: [
-          'using System;',
-          'using Microsoft.AspNetCore.Components;',
-          'using Microsoft.AspNetCore.Components.Rendering;',
-          '',
-          '// A child component, used by the root below.',
-          'public class Counter : ComponentBase',
-          '{',
-          '    int count;',
-          '',
-          '    protected override void BuildRenderTree(RenderTreeBuilder builder)',
-          '    {',
-          '        builder.OpenElement(0, "button");',
-          '        builder.AddAttribute(1, "onclick",',
-          '            EventCallback.Factory.Create<Microsoft.AspNetCore.Components.Web.MouseEventArgs>(this, () => count++));',
-          '        builder.AddContent(2, $"Clicked {count} times");',
-          '        builder.CloseElement();',
-          '    }',
-          '}',
-          '',
-          'public class App : ComponentBase',
-          '{',
-          '    protected override void BuildRenderTree(RenderTreeBuilder builder)',
-          '    {',
-          '        builder.OpenElement(0, "div");',
-          '        builder.AddAttribute(1, "style", "text-align:center; font-family:sans-serif");',
-          '        builder.OpenElement(2, "h1");',
-          '        builder.AddContent(3, "Hello from C#");',
-          '        builder.CloseElement();',
-          '        builder.OpenComponent<Counter>(4);',
-          '        builder.CloseComponent();',
-          '        builder.CloseElement();',
-          '    }',
-          '}',
-          '',
-        ].join('\n'),
+<h1>Home</h1>
+
+<p>
+    A multi-file project: <code>App.razor</code> routes, and each page is its own file that
+    declares <code>@page</code>.
+</p>
+
+<p><NavLink href="/counter">Go to /counter</NavLink></p>
+`,
+            },
+            {
+              name: 'Counter.razor',
+              content: `@page "/counter"
+
+<h2>Counter</h2>
+
+<p>You clicked <strong>@count</strong> times.</p>
+<button @onclick="Increment">Click me</button>
+
+<p><NavLink href="/">Back home</NavLink></p>
+
+@code {
+    int count;
+
+    void Increment() => count++;
+}
+`,
+            },
+          ],
+        },
+
+        csharp: {
+          files: [
+            {
+              name: 'Components.cs',
+              content: `using System;
+using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Rendering;
+using Microsoft.AspNetCore.Components.Web;
+
+// A component per class; they compile into one assembly, so App can use Counter.
+public class Counter : ComponentBase
+{
+    int count;
+
+    protected override void BuildRenderTree(RenderTreeBuilder builder)
+    {
+        builder.OpenElement(0, "button");
+        builder.AddAttribute(1, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, () => count++));
+        builder.AddContent(2, $"Clicked {count} times");
+        builder.CloseElement();
+    }
+}
+
+public class App : ComponentBase
+{
+    protected override void BuildRenderTree(RenderTreeBuilder builder)
+    {
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "style", "text-align:center; font-family:sans-serif");
+
+        builder.OpenElement(2, "h1");
+        builder.AddContent(3, "A C# project");
+        builder.CloseElement();
+
+        builder.OpenComponent<Counter>(4);
+        builder.CloseComponent();
+
+        builder.CloseElement();
+    }
+}
+`,
+            },
+          ],
+        },
       };
-
-      var FILE_NAME = { razor: 'Component.razor', csharp: 'Components.cs' };
 
       var statusEl = document.getElementById('status');
       var renderButton = document.getElementById('render');
       var codeEl = document.getElementById('code');
       var rootEl = document.getElementById('root');
-      var languageEl = document.getElementById('language');
-      var fileNameEl = document.getElementById('file-name');
+      var modeEl = document.getElementById('mode');
+      var tabsEl = document.getElementById('file-tabs');
+      var routesEl = document.getElementById('routes');
+      var addButton = document.getElementById('add-file');
+      var removeButton = document.getElementById('remove-file');
       var diagnosticsEl = document.getElementById('diagnostics');
+      var stageEl = document.getElementById('blazor-app');
 
-      codeEl.value = SAMPLES[languageEl.value];
+      var project = clone(DEFAULT_PROJECTS[modeEl.value]);
+      var activeFile = 0;
+
+      function clone(value) {
+        return JSON.parse(JSON.stringify(value));
+      }
 
       function setStatus(text, className) {
         statusEl.textContent = text;
         statusEl.className = className || '';
+      }
+
+      function saveActiveFile() {
+        if (project.files[activeFile]) project.files[activeFile].content = codeEl.value;
+      }
+
+      function loadActiveFile() {
+        codeEl.value = project.files[activeFile] ? project.files[activeFile].content : '';
+      }
+
+      function renderTabs() {
+        tabsEl.textContent = '';
+        project.files.forEach(function (file, index) {
+          var tab = document.createElement('button');
+          tab.className = 'tab' + (index === activeFile ? ' active' : '');
+          tab.textContent = file.name;
+          tab.onclick = function () {
+            saveActiveFile();
+            activeFile = index;
+            loadActiveFile();
+            renderTabs();
+          };
+          tabsEl.appendChild(tab);
+        });
+        removeButton.disabled = project.files.length <= 1;
+      }
+
+      function showRoutes(routes) {
+        routesEl.textContent = '';
+        (routes || []).forEach(function (route) {
+          var chip = document.createElement('button');
+          chip.className = 'route-chip';
+          chip.textContent = route;
+          chip.title = 'Navigate to ' + route;
+          chip.onclick = function () {
+            renderButton.disabled = true;
+            runner.navigateTo(route).then(
+              function () {
+                renderButton.disabled = false;
+              },
+              function (err) {
+                renderButton.disabled = false;
+                diagnosticsEl.textContent = String((err && err.message) || err);
+              },
+            );
+          };
+          routesEl.appendChild(chip);
+        });
       }
 
       // The page itself uses the same loader the package ships.
@@ -249,19 +388,16 @@
         },
       });
 
-      function compile(source, componentName) {
-        return languageEl.value === 'razor'
-          ? runner.renderRazor(source, componentName)
-          : runner.render(source, componentName);
-      }
-
-      async function renderComponent() {
+      async function renderProject() {
         renderButton.disabled = true;
         diagnosticsEl.textContent = '';
+        saveActiveFile();
         var started = performance.now();
         try {
-          var result = await compile(codeEl.value, rootEl.value.trim());
+          var result = await runner.renderProject(clone(project.files), rootEl.value.trim());
           var elapsed = Math.round(performance.now() - started);
+
+          showRoutes(result.routes);
 
           if (result.success) {
             setStatus('rendered ' + result.type + ' — ' + elapsed + ' ms', 'ready');
@@ -282,22 +418,44 @@
         }
       }
 
-      languageEl.addEventListener('change', function () {
-        fileNameEl.textContent = FILE_NAME[languageEl.value];
-        codeEl.value = SAMPLES[languageEl.value];
-        renderComponent();
+      modeEl.addEventListener('change', function () {
+        project = clone(DEFAULT_PROJECTS[modeEl.value]);
+        activeFile = 0;
+        loadActiveFile();
+        renderTabs();
+        renderProject();
       });
 
-      renderButton.addEventListener('click', renderComponent);
+      addButton.addEventListener('click', function () {
+        var name = prompt('File name', 'Page.razor');
+        if (!name) return;
+        saveActiveFile();
+        project.files.push({ name: name, content: name.endsWith('.razor') ? '@page "/' + name.replace(/\.razor$/i, '').toLowerCase() + '"\n\n<h2>' + name.replace(/\.razor$/i, '') + '</h2>\n' : '' });
+        activeFile = project.files.length - 1;
+        loadActiveFile();
+        renderTabs();
+      });
+
+      removeButton.addEventListener('click', function () {
+        if (project.files.length <= 1) return;
+        project.files.splice(activeFile, 1);
+        activeFile = Math.max(0, activeFile - 1);
+        loadActiveFile();
+        renderTabs();
+      });
+
+      renderButton.addEventListener('click', renderProject);
       codeEl.addEventListener('keydown', function (event) {
-        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') renderComponent();
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') renderProject();
       });
 
+      loadActiveFile();
+      renderTabs();
       setStatus('downloading runtime…', 'loading');
       runner.ready().then(
         function () {
           renderButton.disabled = false;
-          return renderComponent();
+          return renderProject();
         },
         function (err) {
           setStatus('failed to start', 'failed');

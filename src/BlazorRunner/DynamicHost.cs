@@ -12,6 +12,9 @@ public class DynamicHost : ComponentBase
     /// <summary>Set on initialisation so the (static) JS interop entry point can reach the live instance.</summary>
     public static DynamicHost Current { get; private set; }
 
+    [Inject]
+    public NavigationManager Navigation { get; set; }
+
     HostErrorBoundary _boundary;
     Type _componentType;
     int _renderId;
@@ -21,6 +24,10 @@ public class DynamicHost : ComponentBase
 
     /// <summary>The exception the last render threw, if any.</summary>
     public Exception LastRenderError => _boundary?.LastError;
+
+    /// <summary>Navigates the host, so <c>@page</c> routing can be driven from the page.</summary>
+    public void NavigateTo(string url) =>
+        _ = InvokeAsync(() => Navigation?.NavigateTo(url));
 
     /// <summary>Renders <paramref name="type"/> on the renderer's dispatcher and waits for the
     /// render pass to finish.</summary>

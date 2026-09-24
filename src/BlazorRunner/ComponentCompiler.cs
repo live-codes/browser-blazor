@@ -6,23 +6,53 @@ using Microsoft.AspNetCore.Components;
 using Microsoft.CodeAnalysis;
 
 /// <summary>
-/// Compiles a user-authored Blazor component (plain C#) with the real Roslyn C# compiler and
-/// loads it. A source file may declare several components — the root is the one named "App"
-/// (or an explicit name), and other components can be used as children.
+/// Compiles a project — any mix of <c>.razor</c> markup and C# — into one assembly, then picks the
+/// component to render.
+///
+/// All files go into a single compilation, which is what lets components in different files
+/// reference each other and <c>@page</c> components register their routes.
 /// </summary>
 public static class ComponentCompiler
 {
-    public static CompileResult Compile(string source, string rootTypeName = null)
+    /// <summary>Compiles the project and resolves the root component. <paramref name="rootTypeName"/>
+    /// is optional: by convention a component named "App" is the root; with no App but with
+    /// <c>@page</c> components, a router over the compiled assembly is used instead; otherwise the
+    /// first component.</summary>
+    public static CompileResult Compile(SourceFile[] files, string rootTypeName)
     {
         if (ReferenceAssemblies.Count == 0)
         {
             throw new InvalidOperationException("No reference assemblies loaded.");
         }
 
+        var project = files ?? Array.Empty<SourceFile>();
+        var markup = project
+            .Where(file => file?.Name is not null && file.Name.EndsWith(".razor", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var sources = new List<SourceFile>(project.Where(file =>
+            file?.Name is not null && !file.Name.EndsWith(".razor", StringComparison.OrdinalIgnoreCase)));
+
+        if (markup.Length > 0)
+        {
+            if (!RazorCompiler.TryGenerate(markup, out var generated, out var razorErrors))
+            {
+                return new CompileResult { Type = null, Errors = razorErrors };
+            }
+
+            for (var i = 0; i < generated.Count; i++)
+            {
+                sources.Add(new SourceFile { Name = "Razor" + i + ".g.cs", Content = generated[i] });
+            }
+        }
+
+        if (sources.Count == 0)
+        {
+            return Fail("BLAZOR0001", "There is nothing to compile.");
+        }
+
         if (!CSharpInProcess.TryCompile(
-                source,
+                sources.ToArray(),
                 OutputKind.DynamicallyLinkedLibrary,
-                "Component.cs",
                 out var assembly,
                 out var imageLength,
                 out var errors))
@@ -33,6 +63,13 @@ public static class ComponentCompiler
         var components = GetLoadableTypes(assembly)
             .Where(t => typeof(IComponent).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface)
             .ToList();
+
+        var routes = components
+            .SelectMany(t => t.GetCustomAttributes<RouteAttribute>().Select(a => a.Template))
+            .Where(template => !string.IsNullOrEmpty(template))
+            .Distinct()
+            .OrderBy(template => template, StringComparer.Ordinal)
+            .ToArray();
 
         if (!string.IsNullOrEmpty(rootTypeName))
         {
@@ -47,53 +84,27 @@ public static class ComponentCompiler
                         : ""));
             }
 
-            return Ok(named, imageLength);
+            return Ok(named, imageLength, routes);
         }
 
-        // Convention: a component named "App" is the root (as in a Blazor project), otherwise
-        // the first one declared.
-        var root = components.FirstOrDefault(t => t.Name == "App") ?? components.FirstOrDefault();
-        if (root is null)
+        var root = components.FirstOrDefault(t => t.Name == "App");
+
+        if (root is null && routes.Length > 0)
         {
-            return Fail("BLAZOR0001", "No Blazor component found. Declare a class that derives from ComponentBase.");
+            // Routed components but no App to host them: route over the assembly we just compiled.
+            HostRouter.RoutesAssembly = assembly;
+            return Ok(typeof(HostRouter), imageLength, routes);
         }
 
-        return Ok(root, imageLength);
+        root ??= components.FirstOrDefault();
+
+        return root is null
+            ? Fail("BLAZOR0001", "No Blazor component found. Declare a class that derives from ComponentBase.")
+            : Ok(root, imageLength, routes);
     }
 
-    /// <summary>Compiles a component written as <c>.razor</c> markup: markup to C# via the Razor
-    /// generator, then that C# to an assembly. <paramref name="componentName"/> names the generated
-    /// class (the Razor file name determines it), defaulting to "App".</summary>
-    public static CompileResult CompileRazor(string razorSource, string componentName)
-    {
-        var name = string.IsNullOrEmpty(componentName) ? "App" : componentName;
-
-        if (!RazorCompiler.TryGenerate(razorSource, name + ".razor", out var generated, out var razorErrors))
-        {
-            return new CompileResult { Type = null, Errors = razorErrors };
-        }
-
-        if (!CSharpInProcess.TryCompile(
-                generated,
-                OutputKind.DynamicallyLinkedLibrary,
-                name + ".g.cs",
-                out var assembly,
-                out var imageLength,
-                out var errors))
-        {
-            return new CompileResult { Type = null, Errors = errors };
-        }
-
-        var type = GetLoadableTypes(assembly)
-            .FirstOrDefault(t => typeof(IComponent).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
-
-        return type is null
-            ? Fail("BLAZOR0001", "No Blazor component found in the generated code.")
-            : Ok(type, imageLength);
-    }
-
-    static CompileResult Ok(Type type, int bytes) =>
-        new CompileResult { Type = type, Bytes = bytes, Errors = Array.Empty<DiagnosticInfo>() };
+    static CompileResult Ok(Type type, int bytes, string[] routes) =>
+        new CompileResult { Type = type, Bytes = bytes, Routes = routes, Errors = Array.Empty<DiagnosticInfo>() };
 
     static CompileResult Fail(string id, string message) =>
         new CompileResult { Type = null, Errors = new[] { DiagnosticInfo.Error(id, message) } };

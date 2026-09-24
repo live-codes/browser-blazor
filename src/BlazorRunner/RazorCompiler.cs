@@ -37,6 +37,7 @@ public static class RazorCompiler
         "@using System.Linq\n" +
         "@using System.Threading.Tasks\n" +
         "@using Microsoft.AspNetCore.Components\n" +
+        "@using Microsoft.AspNetCore.Components.Routing\n" +
         "@using Microsoft.AspNetCore.Components.Web\n";
 
     static readonly string[] CompilerResources =
@@ -104,22 +105,25 @@ public static class RazorCompiler
         return _generator;
     }
 
-    /// <summary>Generates the C# for a single <c>.razor</c> file.</summary>
-    public static bool TryGenerate(string razorSource, string fileName, out string generatedCSharp, out DiagnosticInfo[] errors)
+    /// <summary>Generates the C# for every <c>.razor</c> file of a project. They are handed to the
+    /// generator together, which is what lets components in different files reference each other
+    /// and <c>@page</c> components register their routes.</summary>
+    public static bool TryGenerate(SourceFile[] files, out List<string> generatedSources, out DiagnosticInfo[] errors)
     {
-        generatedCSharp = null;
+        generatedSources = new List<string>();
         errors = Array.Empty<DiagnosticInfo>();
+
+        var razorFiles = (files ?? Array.Empty<SourceFile>())
+            .Where(file => file is not null && !string.IsNullOrEmpty(file.Name))
+            .ToArray();
 
         var compilation = CSharpCompilation.Create(
             "UserRazor",
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary),
             references: ReferenceAssemblies.All);
 
-        var additionalTexts = new AdditionalText[]
-        {
-            new RazorAdditionalText(ImportsFileName, ImportsSource),
-            new RazorAdditionalText(fileName, razorSource ?? ""),
-        };
+        var additionalTexts = new List<AdditionalText> { new RazorAdditionalText(ImportsFileName, ImportsSource) };
+        additionalTexts.AddRange(razorFiles.Select(file => (AdditionalText)new RazorAdditionalText(file.Name, file.Content ?? "")));
 
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
             new[] { GetGenerator().AsSourceGenerator() },
@@ -133,21 +137,30 @@ public static class RazorCompiler
         // reported as a warning — so keep every diagnostic to explain an empty result.
         var generatorDiagnostics = diagnostics.Select(DiagnosticInfo.From).ToArray();
 
-        // The generator names its output "<FileName>_razor.g.cs".
-        var hint = fileName.Replace(".", "_");
-        var generated = driver.GetRunResult().Results
-            .SelectMany(r => r.GeneratedSources)
-            .FirstOrDefault(s => s.HintName is not null && s.HintName.StartsWith(hint, StringComparison.OrdinalIgnoreCase));
+        foreach (var result in driver.GetRunResult().Results)
+        {
+            foreach (var source in result.GeneratedSources)
+            {
+                // _Imports.razor generates a class of its own; the components' generated code
+                // already carries its usings.
+                if (source.HintName is null ||
+                    source.HintName.StartsWith("_Imports", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
 
-        if (generated.HintName is null)
+                generatedSources.Add(source.SourceText.ToString());
+            }
+        }
+
+        if (generatedSources.Count == 0)
         {
             errors = generatorDiagnostics.Length > 0
                 ? generatorDiagnostics
-                : new[] { DiagnosticInfo.Error("RAZOR0001", $"The Razor compiler produced no output for '{fileName}'.") };
+                : new[] { DiagnosticInfo.Error("RAZOR0001", "The Razor compiler produced no output for this project.") };
             return false;
         }
 
-        generatedCSharp = generated.SourceText.ToString();
         return true;
     }
 }
