@@ -99,6 +99,10 @@ is `UserRazor.Layout.MainLayout`), `@page` declares routes, `Name.razor.css` sco
 `@using`s come from the project's own `_Imports.razor` — a template-style one is supplied only when
 the project has none. `UserRazor` is the project's root namespace unless you pass one.
 
+A project can also be a single file. `renderRazor` (and `renderProject` with one entry) needs no
+`_Imports.razor` — the template's equivalent is supplied when the project has none — so the shortest
+usable call is `runner.renderRazor('<h1>Hello</h1>')`.
+
 ## Step 1 — findings
 
 Measured against `@seth0x41/csharp-wasm@1.0.3` (from `_framework/blazor.boot.json` and the string
@@ -190,7 +194,9 @@ A component that throws *while rendering* comes back as `success: false` with th
 - **Static assets are served.** A project's `wwwroot/` files come back as data URLs keyed by their path
   below it, and the loader points the rendered `src`/`href`/`poster` attributes at them, so
   `<img src="logo.svg">` works as it does locally. A file whose content is already a `data:` URL is
-  passed through, so binary assets can be supplied pre-encoded.
+  passed through, so binary assets can be supplied pre-encoded. A `MutationObserver` keeps them
+  pointed as the DOM changes, because navigating between `@page` components rebuilds the markup — a
+  one-off pass would only hold until the first navigation.
 - **Razor is compiled by the real Razor compiler.** There is no standalone Razor library any more, so
   `RazorCompiler` drives the SDK's incremental generator
   (`Microsoft.NET.Sdk.Razor.SourceGenerators.RazorSourceGenerator`) through a `CSharpGeneratorDriver`,

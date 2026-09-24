@@ -146,26 +146,73 @@
                 });
         }
 
-        // A project's wwwroot/ files come back as data URLs, so point the rendered markup at them.
+        // A project's wwwroot/ files arrive as data URLs, so point the rendered markup at them. A
+        // MutationObserver keeps that true as the DOM changes: navigating between @page components
+        // rebuilds the markup, so a one-off pass would only fix the first render.
+        var assetMap = {};
+        var assetObserver = null;
+
         function resolveAssets(result) {
-            var assets = result && result.assets;
-            if (!assets) return;
+            if (!result || !result.assets) return;
+
+            assetMap = result.assets;
 
             var root = document.getElementById('blazor-app');
             if (!root) return;
 
-            var attributes = ['src', 'href', 'poster'];
-            var elements = root.querySelectorAll('[src], [href], [poster]');
+            applyAssets(root, assetMap);
+            observeAssets(root);
+        }
 
-            for (var i = 0; i < elements.length; i++) {
-                for (var j = 0; j < attributes.length; j++) {
-                    var attribute = attributes[j];
-                    var value = elements[i].getAttribute(attribute);
-                    if (!value) continue;
+        function observeAssets(root) {
+            if (assetObserver || typeof MutationObserver === 'undefined') return;
 
-                    var key = value.replace(/^\.\//, '').replace(/^\//, '');
-                    if (assets[key]) elements[i].setAttribute(attribute, assets[key]);
+            assetObserver = new MutationObserver(function (records) {
+                for (var i = 0; i < records.length; i++) {
+                    if (records[i].type === 'attributes') {
+                        rewriteAsset(records[i].target, assetMap);
+                        continue;
+                    }
+
+                    var added = records[i].addedNodes;
+                    for (var j = 0; j < added.length; j++) {
+                        applyAssets(added[j], assetMap);
+                    }
                 }
+            });
+
+            assetObserver.observe(root, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['src', 'href', 'poster'],
+            });
+        }
+
+        function applyAssets(node, map) {
+            if (!node || node.nodeType !== 1) return;
+
+            rewriteAsset(node, map);
+
+            var descendants = node.querySelectorAll('[src], [href], [poster]');
+            for (var i = 0; i < descendants.length; i++) {
+                rewriteAsset(descendants[i], map);
+            }
+        }
+
+        function rewriteAsset(element, map) {
+            var attributes = ['src', 'href', 'poster'];
+
+            for (var i = 0; i < attributes.length; i++) {
+                var attribute = attributes[i];
+                var value = element.getAttribute(attribute);
+                if (!value) continue;
+
+                var key = value.replace(/^\.\//, '').replace(/^\//, '');
+                var resolved = map[key];
+
+                // Setting it only when it actually changes keeps the observer from looping on itself.
+                if (resolved && resolved !== value) element.setAttribute(attribute, resolved);
             }
         }
 
