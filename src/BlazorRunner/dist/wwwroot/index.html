@@ -98,7 +98,17 @@
         white-space: pre-wrap;
       }
       #diagnostics:empty { display: none; }
-      footer { display: flex; align-items: center; gap: 10px; }
+      footer { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      #root {
+        width: 130px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        padding: 9px 10px;
+        font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        outline: none;
+      }
       button {
         background: var(--accent);
         color: #0d0f14;
@@ -117,7 +127,7 @@
     <header>
       <h1>Blazor component playground</h1>
       <span class="subtitle"
-        >write a Blazor component in C# — Roslyn compiles it in this page and it renders on the
+        >write Blazor components in C# — Roslyn compiles them in this page and they render on the
         real Blazor renderer, no server</span
       >
       <span id="status">starting…</span>
@@ -125,7 +135,7 @@
 
     <main>
       <section>
-        <div class="section-head"><span>Component.cs</span></div>
+        <div class="section-head"><span>Components.cs</span></div>
         <textarea id="code" spellcheck="false"></textarea>
       </section>
       <section>
@@ -140,6 +150,8 @@
 
     <footer>
       <button id="render" disabled>Render</button>
+      <label class="hint" for="root">root component</label>
+      <input id="root" placeholder="App" autocomplete="off" spellcheck="false" />
       <span class="hint">Ctrl/Cmd + Enter to render</span>
     </footer>
 
@@ -151,6 +163,7 @@
         'using Microsoft.AspNetCore.Components.Rendering;',
         'using Microsoft.AspNetCore.Components.Web;',
         '',
+        '// A child component, used by the root below.',
         'public class Counter : ComponentBase',
         '{',
         '    int count;',
@@ -159,17 +172,29 @@
         '',
         '    protected override void BuildRenderTree(RenderTreeBuilder builder)',
         '    {',
+        '        builder.OpenElement(0, "button");',
+        '        builder.AddAttribute(1, "onclick",',
+        '            EventCallback.Factory.Create<MouseEventArgs>(this, Increment));',
+        '        builder.AddContent(2, $"Clicked {count} times");',
+        '        builder.CloseElement();',
+        '    }',
+        '}',
+        '',
+        '// The root component. A component named "App" is picked by default;',
+        '// put another name in the "root component" box to render that one instead.',
+        'public class App : ComponentBase',
+        '{',
+        '    protected override void BuildRenderTree(RenderTreeBuilder builder)',
+        '    {',
         '        builder.OpenElement(0, "div");',
         '        builder.AddAttribute(1, "style", "text-align:center; font-family:sans-serif");',
         '',
         '        builder.OpenElement(2, "h1");',
-        '        builder.AddContent(3, $"Count: {count}");',
+        '        builder.AddContent(3, "A parent component");',
         '        builder.CloseElement();',
         '',
-        '        builder.OpenElement(4, "button");',
-        '        builder.AddAttribute(5, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, Increment));',
-        '        builder.AddContent(6, "Click me");',
-        '        builder.CloseElement();',
+        '        builder.OpenComponent<Counter>(4);',
+        '        builder.CloseComponent();',
         '',
         '        builder.CloseElement();',
         '    }',
@@ -180,6 +205,7 @@
       var statusEl = document.getElementById('status');
       var renderButton = document.getElementById('render');
       var codeEl = document.getElementById('code');
+      var rootEl = document.getElementById('root');
       var diagnosticsEl = document.getElementById('diagnostics');
 
       codeEl.value = SAMPLE;
@@ -209,11 +235,12 @@
 
       // The app assembly is loaded lazily just after Blazor.start() resolves, so the first
       // interop call can race it. Retry until the assembly is present.
-      function invoke(source) {
+      function invoke(source, rootType) {
         var attempt = 0;
         function tryInvoke() {
-          return window.DotNet.invokeMethodAsync('BlazorRunner', 'RenderComponent', source).catch(
-            function (err) {
+          return window.DotNet
+            .invokeMethodAsync('BlazorRunner', 'RenderComponent', source, rootType)
+            .catch(function (err) {
               var message = String((err && err.message) || err);
               if (message.indexOf('no loaded assembly') >= 0 && attempt++ < 240) {
                 return new Promise(function (resolve) {
@@ -221,8 +248,7 @@
                 }).then(tryInvoke);
               }
               throw err;
-            },
-          );
+            });
         }
         return tryInvoke();
       }
@@ -233,7 +259,7 @@
         var started = performance.now();
         try {
           await boot();
-          var json = await invoke(codeEl.value);
+          var json = await invoke(codeEl.value, rootEl.value.trim());
           var result = typeof json === 'string' ? JSON.parse(json) : json;
           var elapsed = Math.round(performance.now() - started);
 

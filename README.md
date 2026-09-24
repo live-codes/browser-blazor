@@ -1,15 +1,14 @@
 # browser-blazor
 
-Run **C# and render live Blazor components in the browser with no server** — proof of concept.
+Run **C# and live Blazor components in the browser with no server**.
 
-Two steps, in order:
-
-1. **`bundle-poc.html`** — runs C# in the page using the existing
-   [`@seth0x41/csharp-wasm`](https://www.npmjs.com/package/@seth0x41/csharp-wasm) bundle. It works,
-   but probing it showed the bundle **cannot render Blazor components** (see
-   [Findings](#step-1-findings)).
-2. **`src/BlazorRunner`** — our own Blazor WebAssembly host that compiles a user-authored
-   component with Roslyn **in the page** and renders it on Blazor's real, interactive renderer.
+- **`bundle-poc.html`** — step 1: runs C# in the page with the existing
+  [`@seth0x41/csharp-wasm`](https://www.npmjs.com/package/@seth0x41/csharp-wasm) bundle. It works,
+  but probing it showed that bundle **cannot render Blazor components**
+  ([findings](#step-1--findings)).
+- **`src/BlazorRunner`** — our own Blazor WebAssembly host. It compiles user C# with Roslyn **in the
+  page**, renders components on Blazor's real interactive renderer, **and** runs console programs —
+  so one bundle can back both the C# language and Blazor.
 
 ## Quick start
 
@@ -19,34 +18,43 @@ Two steps, in order:
 node serve.js                       # http://localhost:8130/bundle-poc.html
 ```
 
-### Step 2 — component playground (host app)
+### Step 2 — the host app
 
 ```powershell
 # One-time (re-run after upgrading the .NET SDK)
 powershell -ExecutionPolicy Bypass -File scripts\prepare-refs.ps1
 
-# Publish the host app (use the SDK that has wasm-tools — see "Prerequisites")
+# Publish (use the SDK that has wasm-tools — see "Prerequisites")
 & "$env:USERPROFILE\.dotnet\dotnet.exe" publish src\BlazorRunner -c Release -o src\BlazorRunner\dist
 
 # Serve it
-node serve.js src/BlazorRunner/dist/wwwroot 8140
-# open http://localhost:8140/
+node serve.js src/BlazorRunner/dist/wwwroot 8140     # http://localhost:8140/
 ```
 
 The playground has a C# editor on the left and the live component on the right. Edit the code,
 press **Render** (or Ctrl/Cmd + Enter), and the component is recompiled and re-rendered.
 
+### Package for a CDN
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\make-package.ps1 -Version 0.1.0
+node serve.js package 8150                            # http://localhost:8150/
+```
+
+`make-package.ps1` does a **clean** publish into `package/`, drops the `.br`/`.gz` siblings (a CDN
+compresses responses itself) and writes `package.json`.
+
 ## Prerequisites
 
-- **.NET SDK 10** with the **`wasm-tools` workload**. On a typical Windows box there are two
-  installs and they are not equivalent — the one on `PATH` (`%ProgramFiles%\dotnet`) often lacks
-  the workload, while `%USERPROFILE%\.dotnet` has it. Use the user-local one:
+- **.NET SDK 10** with the **`wasm-tools` workload**. On a typical Windows box there are two installs
+  and they are not equivalent — the one on `PATH` (`%ProgramFiles%\dotnet`) often lacks the workload,
+  while `%USERPROFILE%\.dotnet` has it. Use the user-local one:
 
   ```powershell
   & "$env:USERPROFILE\.dotnet\dotnet.exe" workload list   # must list wasm-tools
   ```
 
-  Both `prepare-refs.ps1` and the commands above default to `%USERPROFILE%\.dotnet`.
+  Both scripts default to `%USERPROFILE%\.dotnet` (`-SdkRoot` / `-DotnetRoot` to override).
 
 - Node.js (only for the static file server).
 
@@ -55,75 +63,119 @@ press **Render** (or Ctrl/Cmd + Enter), and the component is recompiled and re-r
 Measured against `@seth0x41/csharp-wasm@1.0.3` (from `_framework/blazor.boot.json` and the string
 table of `MyRunnyApp.*.wasm`):
 
-- **It compiles and runs C# entirely in the browser.** User code is compiled to `DynamicAssembly`
-  and loaded with `AssemblyLoadContext`; `Console` I/O is captured. Cold run ~2 s, warm ~25 ms.
-- **The Roslyn reference set excludes Blazor.** Compiling `using Microsoft.AspNetCore.Components;`
-  fails with *"The type or namespace name 'AspNetCore' does not exist in the namespace 'Microsoft'"*,
-  so user code cannot reference Blazor types and cannot author a component.
-- **Blazor's rendering types are trimmed.** At runtime `ComponentBase` resolves, but
+- **It compiles and runs C# entirely in the browser** — compiled to `DynamicAssembly`, loaded with
+  `AssemblyLoadContext`, `Console` I/O captured. Cold run ~2 s, warm ~25 ms.
+- **The Roslyn reference set excludes Blazor.** `using Microsoft.AspNetCore.Components;` fails with
+  *"The type or namespace name 'AspNetCore' does not exist in the namespace 'Microsoft'"*, so user
+  code cannot reference Blazor types and cannot author a component.
+- **Blazor's rendering types are trimmed.** `ComponentBase` resolves at runtime, but
   `Microsoft.AspNetCore.Components.Web.HtmlRenderer` and `RenderTreeBuilder` are **not found**.
 - **The app has no main root component** (its only selector literal is `head::after`) and the npm
   package ships no `index.html`, so its own UI cannot be booted standalone.
 - **Dynamic root components are disabled** — `Blazor.rootComponents.add(...)` reports *"Dynamic root
   components have not been enabled in this application."*
 
-The bundle is a good Roslyn-in-the-browser engine, but not a component host. Hence step 2.
+It is a good Roslyn-in-the-browser engine, but not a component host. Hence step 2.
 
-## Step 2 — how the host works
+## Step 2 — the host
 
-`src/BlazorRunner` is a `Microsoft.NET.Sdk.BlazorWebAssembly` app published as static files
-(no server logic).
+`src/BlazorRunner` is a `Microsoft.NET.Sdk.BlazorWebAssembly` app published as static files (no
+server logic).
+
+### API
+
+Called from the page with `DotNet.invokeMethodAsync('BlazorRunner', …)`:
+
+| Method | Returns |
+| ------ | ------- |
+| `RenderComponent(source, rootType)` | `{ success, type, errors[] }` — compiles and renders a component. `rootType` is an optional component name; when empty the component named `App` is used, else the first. |
+| `RunCode(source, stdin)` | `{ success, output, errors[] }` — compiles and runs a console program, capturing stdout. |
+| `ReferenceCount()` | number of embedded reference assemblies. |
+
+Each diagnostic is `{ id, message, severity, line, column }`.
+
+### Files
 
 | File | Role |
 | ---- | ---- |
-| `Program.cs` | Builds the host; mounts the single root component at `#blazor-app`; loads the embedded reference assemblies. |
-| `DynamicHost.cs` | The fixed root component. Renders whatever component was last compiled, using `RenderTreeBuilder.OpenComponent(int, Type)`. |
-| `ComponentCompiler.cs` | Roslyn: parse → `CSharpCompilation.Create` → `Emit` → `Assembly.Load` → find the `IComponent` type. |
-| `BlazorBridge.cs` | The interop surface: `[JSInvokable] RenderComponent(source)`, returning `{ success, type, errors[] }`. |
-| `wwwroot/index.html` | The playground page (editor + render stage). |
-| `../../scripts/prepare-refs.ps1` | Copies BCL + ASP.NET Core reference assemblies into `refs/`, embedded as resources. |
+| `Program.cs` | Builds the host; mounts the root component at `#blazor-app`; loads the embedded reference assemblies. |
+| `DynamicHost.cs` | The fixed root component — renders whatever component was last compiled, via `RenderTreeBuilder.OpenComponent(int, Type)`. |
+| `CSharpInProcess.cs` | Shared compile path: parse → `CSharpCompilation.Create` → `Emit` → `Assembly.Load`. |
+| `ComponentCompiler.cs` | Picks the root component out of the compiled assembly (named `App`, else first, else explicit). |
+| `ConsoleRunner.cs` | Console mode: entry point invocation with `Console` captured. |
+| `ReferenceAssemblies.cs` | The embedded BCL + ASP.NET Core reference assemblies. |
+| `Diagnostics.cs` | `DiagnosticInfo` / `CompileResult` / `RunResult`. |
+| `BlazorBridge.cs` | The `[JSInvokable]` surface. |
+| `wwwroot/index.html` | The playground page. |
+| `../../scripts/prepare-refs.ps1` | Copies the reference assemblies into `refs/`. |
 
-Key points:
+### How it works
 
 - **The user's component runs on the app's own renderer.** `DynamicHost` keeps the compiled `Type`
-  and opens it as a child component, so the user's component participates in the real Blazor render
-  tree — event handlers (`onclick`), `StateHasChanged`, parameters and lifecycle all work.
-- **Reference assemblies are embedded**, not fetched: `scripts/prepare-refs.ps1` copies 307 DLLs
-  (11.7 MB) from `Microsoft.NETCore.App.Ref` and `Microsoft.AspNetCore.App.Ref` into
-  `src/BlazorRunner/refs/`, and the csproj embeds them as `lib.*` resources. The BCL is copied first
-  so it wins any name overlap with the ASP.NET Core pack.
-- **`PublishTrimmed=false`.** The user's compiled assembly resolves against the full BCL and ASP.NET
+  and opens it as a child component, so it joins the real Blazor render tree — event handlers
+  (`onclick`), `StateHasChanged`, parameters and lifecycle all work.
+- **Several components per compile.** A source file may declare many components; the root is the one
+  named `App` (or an explicit name) and the others are usable as children.
+- **Reference assemblies are embedded**, not fetched: `prepare-refs.ps1` copies 307 DLLs (11.7 MB)
+  from `Microsoft.NETCore.App.Ref` and `Microsoft.AspNetCore.App.Ref` into `refs/`, and the csproj
+  embeds them as `lib.*` resources. The BCL is copied first so it wins any name overlap.
+- **`PublishTrimmed=false`** — the compiled user assembly resolves against the full BCL and ASP.NET
   Core at runtime, so nothing may be linked away.
-- **A fresh assembly identity per compile** (`UserComponent_<guid>`) — loading two assemblies with
-  the same name into the default load context would clash.
-- **`WithConcurrentBuild(false)`** — Roslyn's parallel binding schedules on the thread pool, and the
+- **A fresh assembly identity per compile** (`User_<guid>`) — two assemblies with the same name in
+  the default load context would clash.
+- **`WithConcurrentBuild(false)`** — Roslyn's parallel binding uses the thread pool, and the
   WebAssembly runtime is single-threaded.
 
 ### Verified
 
-Checked in a real browser (headless Chrome via CDP):
+Checked in a real browser (headless Chrome via CDP), against the packaged output:
 
-- a `Counter` component compiles and renders (`Count: 0` + a button); clicking it three times gives
-  `Count: 3` — i.e. the compiled component is genuinely interactive;
-- re-rendering swaps in a different component (`Greeting`) in ~66 ms (warm);
-- a bad program reports diagnostics: `CS0246: The type or namespace name 'NonexistentType' could not
-  be found (line 2)`.
+- a parent component rendering a child (`OpenComponent<Counter>`) compiles and renders; clicking the
+  child's button increments it (`Clicked 2 times`) — genuinely interactive;
+- the `root component` box selects which component renders (`Counter` instead of `App`);
+- an unknown root reports `BLAZOR0002: Component 'Nope' was not found. Available: Counter, App.`;
+- a compile error reports `CS0246: … (line 2)`;
+- the console runner returns `Hello from the console runner` plus `stdin was: hello stdin`.
 
 ### Size and limitations
 
-- **Bundle size.** The publish is ~87 MB (~78 MB of `_framework`), including the untrimmed BCL +
-  ASP.NET Core runtime, Roslyn, and the embedded reference assemblies. Comparable to
-  `csharp-wasm`/`vb-wasm`; a CDN should drop the `.br`/`.gz` siblings (it compresses itself).
-- **C# only, no `.razor`.** Components are written as C# classes (`BuildRenderTree`). Supporting
-  `.razor` markup needs the Razor compiler (`Microsoft.AspNetCore.Razor.Language`) in the bundle.
-- **Assemblies accumulate.** Each render loads a new assembly into the default load context; a long
-  session grows memory. A collectible `AssemblyLoadContext` would fix this.
-- **One component per render** — the first `IComponent` type in the compiled source is rendered.
+- **Bundle size.** ~54 MB in `package/` (37 MB of it the .NET + ASP.NET Core runtime, ~12 MB the app
+  assembly with Roslyn and the embedded reference assemblies).
+- **Publish into a clean folder.** Publishing into a populated output directory leaves the previous
+  content-hashed `BlazorRunner.<hash>.wasm` behind — an extra ~12 MB of dead weight each time, with
+  only one referenced by `blazor.boot.json`. `make-package.ps1` deletes `dist/` first and asserts a
+  single assembly; a plain repeated `dotnet publish -o` does not.
+- **C# only, no `.razor`.** Components are C# classes (`BuildRenderTree`). `.razor` markup needs the
+  Razor compiler (`Microsoft.AspNetCore.Razor.Language`) in the bundle.
+- **Assemblies accumulate.** Every render loads a new assembly into the default load context, so a
+  long session grows memory. A collectible `AssemblyLoadContext` would fix this.
+
+## Reusing it for C#
+
+**Yes.** `RunCode(source, stdin)` is already the capability LiveCodes' `csharp-wasm` language uses —
+its script calls `DotNet.invokeMethodAsync('MyRunnyApp', 'RunCode', code, input)` and reads
+`{ output, errors }`, which this bundle mirrors. So `@live-codes/blazor-wasm` can back both the C#
+language and Blazor from **one** copy of Roslyn, the .NET runtime and the BCL reference assemblies,
+instead of shipping `csharp-wasm` and a separate Blazor bundle.
+
+What that costs, so it is a deliberate choice:
+
+- **Size.** One ~54 MB bundle instead of `csharp-wasm`'s ~40 MB. A C#-only session pays ~14 MB more
+  (the ASP.NET Core runtime and its reference assemblies) for capability it does not use. Two
+  bundles would be ~40 MB + ~54 MB, so consolidation wins as soon as Blazor is used at all.
+- **LiveCodes glue, when we get there.** The `csharp-wasm` script hard-codes the `MyRunnyApp`
+  assembly name and its bundle URL is pinned in `vendors.ts`; both would point here. The result shape
+  also differs slightly — this bundle returns `errors` as an array of diagnostics where the current
+  code expects a pre-joined string — so `lang-csharp-wasm-script.ts` needs a few lines to join them.
+  Nothing changes in the language spec, editor support or starter template.
+- **Further consolidation.** `vb-wasm` uses a separate Roslyn package
+  (`Microsoft.CodeAnalysis.VisualBasic`), so folding it in would mean one bundle carrying both
+  compilers (~+5 MB) to serve C#, VB and Blazor together.
 
 ## Next steps
 
-- **Wire into LiveCodes** the way `vb-wasm` is: publish this bundle as `@live-codes/blazor-wasm`,
-  pin it in `src/livecodes/vendors.ts`, and add a language spec + starter template under
-  `src/livecodes/languages/blazor-wasm/` (the host page's editor becomes LiveCodes' result frame).
 - **Add `.razor` support** by embedding the Razor compiler and compiling markup to C# before Roslyn.
-- **Shrink the bundle** — the trimming restrictions and duplicated ref assemblies are the main cost.
+- **Wire into LiveCodes** (deliberately not done yet): point the C# language and a new `blazor-wasm`
+  language at this package, per [Reusing it for C#](#reusing-it-for-c).
+- **Shrink the bundle** — the untrimmed runtime and the duplicated reference assemblies are the main
+  cost.

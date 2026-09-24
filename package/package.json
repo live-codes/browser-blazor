@@ -1,0 +1,10 @@
+﻿{
+    "license":  "MIT",
+    "description":  "Run C# and render Blazor components in the browser, with no server.",
+    "name":  "@live-codes/blazor-wasm",
+    "version":  "0.1.0",
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/live-codes/browser-blazor"
+                   }
+}

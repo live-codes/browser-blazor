@@ -8,7 +8,7 @@ var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<DynamicHost>("#blazor-app");
 
 // Reference assemblies (BCL + ASP.NET Core) are embedded in this assembly's manifest
-// resources; Roslyn needs them to compile the user's component.
-ComponentCompiler.LoadRefsFromAssemblyResources(typeof(ComponentCompiler).Assembly);
+// resources; Roslyn needs them to compile the user's component or program.
+ReferenceAssemblies.LoadFromAssemblyResources(typeof(ReferenceAssemblies).Assembly);
 
 await builder.Build().RunAsync();
