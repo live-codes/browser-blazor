@@ -45,6 +45,20 @@ public static class Payload
     static readonly object Gate = new object();
     static readonly Dictionary<string, Task<Dictionary<string, byte[]>>> InFlight =
         new Dictionary<string, Task<Dictionary<string, byte[]>>>(StringComparer.Ordinal);
+    static readonly List<string> Fetched = new List<string>();
+
+    /// <summary>The payloads fetched so far, in order. Reported to the page so a console program can
+    /// show that it never pulled the Razor compiler.</summary>
+    public static string[] Loaded
+    {
+        get
+        {
+            lock (Gate)
+            {
+                return Fetched.ToArray();
+            }
+        }
+    }
 
     /// <summary>The zip's entries by file name. The first caller fetches; later ones share the task,
     /// so a payload is fetched once no matter how many compiles are waiting on it.</summary>
@@ -80,20 +94,26 @@ public static class Payload
 
         var entries = new Dictionary<string, byte[]>(StringComparer.Ordinal);
 
-        using var stream = new MemoryStream(bytes, writable: false);
-        using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
-
-        foreach (var entry in archive.Entries)
+        using (var stream = new MemoryStream(bytes, writable: false))
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Read))
         {
-            if (entry.Length == 0)
+            foreach (var entry in archive.Entries)
             {
-                continue;
-            }
+                if (entry.Length == 0)
+                {
+                    continue;
+                }
 
-            using var entryStream = entry.Open();
-            using var buffer = new MemoryStream((int)entry.Length);
-            entryStream.CopyTo(buffer);
-            entries[entry.FullName] = buffer.ToArray();
+                using var entryStream = entry.Open();
+                using var buffer = new MemoryStream((int)entry.Length);
+                entryStream.CopyTo(buffer);
+                entries[entry.FullName] = buffer.ToArray();
+            }
+        }
+
+        lock (Gate)
+        {
+            Fetched.Add(fileName);
         }
 
         return entries;

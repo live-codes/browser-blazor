@@ -122,6 +122,11 @@ public static class BlazorBridge
     [JSInvokable]
     public static void SetBaseUrl(string baseUrl) => Payload.BaseUrl = baseUrl ?? "";
 
+    /// <summary>Which compiler payloads have been fetched. A console program needs only the
+    /// reference assemblies, so this reports "refs.zip" and nothing else.</summary>
+    [JSInvokable]
+    public static string[] LoadedPayloads() => Payload.Loaded;
+
     /// <summary>How many reference assemblies are loaded, fetching them if they are not yet — the
     /// page uses this as a readiness check.</summary>
     [JSInvokable]

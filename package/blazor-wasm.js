@@ -30,6 +30,10 @@
  *   run                                  -> { success, output, errors[] }
  * and each diagnostic is { id, message, severity, line, column }.
  *
+ * payloads() reports which compiler payloads have been fetched: 'refs.zip' for any compile, plus
+ * 'razor.zip' once a project with .razor markup has been compiled. A console program needs only the
+ * former, so it runs without downloading the Razor compiler.
+ *
  * With @page components, renderProject's `routes` lists them; navigate with
  * `runner.navigateTo('/counter')`.
  *
@@ -256,6 +260,11 @@
              *  yet, so this doubles as a readiness check. */
             referenceCount: function () {
                 return call('ReferenceCount', []);
+            },
+            /** Which compiler payloads have been fetched — 'refs.zip' for any compile, plus
+             *  'razor.zip' once a project with .razor markup has been compiled. */
+            payloads: function () {
+                return call('LoadedPayloads', []);
             },
         };
     }

@@ -137,6 +137,7 @@ Called from the page with `DotNet.invokeMethodAsync('BlazorRunner', …)`:
 | `NavigateTo(url)` | Drives the host's `NavigationManager`, for `@page` routing. |
 | `RunCode(source, stdin)` | `{ success, output, errors[] }` — compiles and runs a console program, capturing stdout. |
 | `ReferenceCount()` | reference assemblies the compiler has loaded, fetching them if it has not yet. |
+| `LoadedPayloads()` | which payloads have been fetched — `refs.zip`, plus `razor.zip` once markup has been compiled. |
 
 A component that throws *while rendering* comes back as `success: false` with the exception in
 `errors`. Diagnostics from generated Razor code are mapped back to the `.razor` source lines.
@@ -234,6 +235,8 @@ A component that throws *while rendering* comes back as `success: false` with th
   ~16 MB of the app assembly, which the browser cannot start without; split out, the app assembly is
   50 KB, the page paints sooner, a console-only session never downloads the Razor compiler, and the
   payloads keep their own URLs so rebuilding the app no longer invalidates them in the HTTP cache.
+  The playground's **C# console** demo shows that directly: a fresh load runs a program and reports
+  `payloads: refs.zip`, and only switching to a Razor project pulls `razor.zip` as well.
 - **`PublishTrimmed=false`** — the compiled user assembly resolves against the full BCL and ASP.NET
   Core at runtime, so nothing may be linked away.
 - **A fresh assembly identity per compile** (`User_<guid>`) — two assemblies with the same name in the

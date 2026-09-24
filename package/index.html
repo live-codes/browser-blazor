@@ -167,6 +167,17 @@
       }
       #render:disabled { opacity: 0.5; cursor: default; }
       .hint { color: var(--muted); font-size: 12px; }
+      #console-output {
+        margin: 0;
+        padding: 14px 16px;
+        max-height: 460px;
+        overflow: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        color: var(--text, #e6e8ee);
+      }
     </style>
   </head>
   <body>
@@ -197,6 +208,8 @@
         <div id="stage">
           <!-- Whatever the project renders mounts here. -->
           <div id="blazor-app"></div>
+          <!-- Console mode writes here instead, so Blazor's root is left alone. -->
+          <pre id="console-output" hidden></pre>
         </div>
         <pre id="diagnostics"></pre>
       </section>
@@ -205,8 +218,11 @@
     <footer>
       <button id="render" disabled>Render</button>
       <select id="mode">
+        <!-- The console demo leads because it is the lightest path: it runs in a fraction of the
+             time a Razor compile takes and pulls refs.zip without the Razor compiler. -->
         <option value="razor">Razor project</option>
         <option value="csharp">C# project</option>
+        <option value="console" selected>C# console</option>
       </select>
       <label class="hint" for="root">root component</label>
       <input id="root" value="App" autocomplete="off" spellcheck="false" />
@@ -415,6 +431,34 @@ public class Counter : ComponentBase
             },
           ],
         },
+        console: {
+          files: [
+            {
+              filename: 'Program.cs',
+              content: `using System;
+using System.Linq;
+
+// A console program: no components, no markup, so no Razor compiler. Run it with the button
+// below (or Ctrl/Cmd + Enter) and watch the payloads reported in the status line — this needs
+// refs.zip and nothing else.
+var readings = new[] { 12, 7, 19, 4, 15 };
+
+Console.WriteLine("readings: " + string.Join(", ", readings));
+Console.WriteLine("count:    " + readings.Length);
+Console.WriteLine("total:    " + readings.Sum());
+Console.WriteLine("average:  " + readings.Average().ToString("0.0"));
+
+Console.WriteLine();
+Console.WriteLine("odd squares:");
+
+foreach (var n in readings.Where(n => n % 2 == 1).Select(n => n * n))
+{
+    Console.WriteLine("  " + n);
+}
+`,
+            },
+          ],
+        },
       };
 
       var statusEl = document.getElementById('status');
@@ -429,6 +473,7 @@ public class Counter : ComponentBase
       var removeButton = document.getElementById('remove-file');
       var diagnosticsEl = document.getElementById('diagnostics');
       var stageEl = document.getElementById('blazor-app');
+      var consoleOutputEl = document.getElementById('console-output');
 
       var project = clone(DEFAULT_PROJECTS[modeEl.value]);
       var activeFile = 0;
@@ -440,6 +485,23 @@ public class Counter : ComponentBase
       function setStatus(text, className) {
         statusEl.textContent = text;
         statusEl.className = className || '';
+      }
+
+      function isConsole() {
+        return modeEl.value === 'console';
+      }
+
+      // Console mode shows a program's output instead of rendering, and writes it beside Blazor's
+      // root rather than into it — the renderer owns that element.
+      function applyMode() {
+        var console = isConsole();
+        renderButton.textContent = console ? 'Run' : 'Render';
+        stageEl.hidden = console;
+        consoleOutputEl.hidden = !console;
+      }
+
+      function showConsole(result) {
+        consoleOutputEl.textContent = result.output || '(no output)';
       }
 
       function saveActiveFile() {
@@ -502,25 +564,41 @@ public class Counter : ComponentBase
         diagnosticsEl.textContent = '';
         saveActiveFile();
         var started = performance.now();
+        var console = isConsole();
+
         try {
-          var result = await runner.renderProject(
-            clone(project.files),
-            rootEl.value.trim(),
-            namespaceEl.value.trim(),
-          );
+          var result = console
+            ? await runner.run(project.files[0].content)
+            : await runner.renderProject(
+                clone(project.files),
+                rootEl.value.trim(),
+                namespaceEl.value.trim(),
+              );
           var elapsed = Math.round(performance.now() - started);
 
-          showRoutes(result.routes);
+          // Which payloads this call needed: a console program never pulls the Razor compiler.
+          var payloads = (await runner.payloads()) || [];
+          var payloadNote = ' — payloads: ' + (payloads.length ? payloads.join(', ') : 'none');
+
+          if (console) {
+            showConsole(result);
+            showRoutes([]);
+          } else {
+            showRoutes(result.routes);
+          }
 
           if (result.success) {
-            setStatus('rendered ' + result.type + ' — ' + elapsed + ' ms', 'ready');
+            setStatus(
+              (console ? 'ran' : 'rendered ' + result.type) + ' — ' + elapsed + ' ms' + payloadNote,
+              'ready',
+            );
           } else {
+            setStatus('failed — ' + elapsed + ' ms' + payloadNote, 'failed');
             diagnosticsEl.textContent = (result.errors || [])
               .map(function (e) {
                 return e.id + ': ' + e.message + (e.line ? ' (line ' + e.line + ')' : '');
               })
               .join('\n');
-            setStatus('failed — ' + elapsed + ' ms', 'failed');
           }
         } catch (err) {
           diagnosticsEl.textContent = String((err && err.message) || err);
@@ -536,6 +614,7 @@ public class Counter : ComponentBase
         activeFile = 0;
         loadActiveFile();
         renderTabs();
+        applyMode();
         renderProject();
       });
 
@@ -571,6 +650,7 @@ public class Counter : ComponentBase
 
       loadActiveFile();
       renderTabs();
+      applyMode();
       setStatus('downloading runtime…', 'loading');
       runner.ready().then(
         function () {
