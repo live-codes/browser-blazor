@@ -187,6 +187,17 @@
       }
       #render:disabled { opacity: 0.5; cursor: default; }
       .hint { color: var(--muted); font-size: 12px; }
+      #stdin {
+        margin: 0;
+        border: 0;
+        border-bottom: 1px solid var(--border);
+        background: transparent;
+        color: var(--text, #e6e8ee);
+        padding: 10px 16px;
+        font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        resize: vertical;
+      }
+      #stdin::placeholder { color: var(--muted); }
       #console-output {
         margin: 0;
         padding: 14px 16px;
@@ -229,6 +240,13 @@
           <!-- Whatever the project renders mounts here. -->
           <div id="blazor-app"></div>
           <!-- Console mode writes here instead, so Blazor's root is left alone. -->
+          <textarea
+            id="stdin"
+            rows="2"
+            spellcheck="false"
+            hidden
+            placeholder="stdin — read with Console.ReadLine()"
+          >hello from stdin</textarea>
           <pre id="console-output" hidden></pre>
         </div>
         <pre id="diagnostics"></pre>
@@ -458,9 +476,12 @@ public class Counter : ComponentBase
               content: `using System;
 using System.Linq;
 
-// A console program: no components, no markup, so no Razor compiler. Run it with the button
-// below (or Ctrl/Cmd + Enter) and watch the payloads reported in the status line — this needs
-// refs.zip and nothing else.
+// A console program: no components, no markup, so no Razor compiler. Run it with the button below (or
+// Ctrl/Cmd + Enter). The box above it is stdin — the same thing LiveCodes passes to RunCode — read
+// with the ordinary Console API.
+var given = Console.In.ReadToEnd();
+Console.WriteLine(given.Length == 0 ? "stdin: (empty)" : "stdin: " + given.TrimEnd());
+
 var readings = new[] { 12, 7, 19, 4, 15 };
 
 Console.WriteLine("readings: " + string.Join(", ", readings));
@@ -494,6 +515,7 @@ foreach (var n in readings.Where(n => n % 2 == 1).Select(n => n * n))
       var diagnosticsEl = document.getElementById('diagnostics');
       var stageEl = document.getElementById('blazor-app');
       var consoleOutputEl = document.getElementById('console-output');
+      var stdinEl = document.getElementById('stdin');
 
       var project = clone(DEFAULT_PROJECTS[modeEl.value]);
       var activeFile = 0;
@@ -518,6 +540,7 @@ foreach (var n in readings.Where(n => n % 2 == 1).Select(n => n * n))
         renderButton.textContent = console ? 'Run' : 'Render';
         stageEl.hidden = console;
         consoleOutputEl.hidden = !console;
+        stdinEl.hidden = !console;
       }
 
       function showConsole(result) {
@@ -591,7 +614,7 @@ foreach (var n in readings.Where(n => n % 2 == 1).Select(n => n * n))
 
         try {
           var result = console
-            ? await runner.run(project.files[0].content)
+            ? await runner.run(project.files[0].content, stdinEl.value)
             : await runner.renderProject(
                 clone(project.files),
                 rootEl.value.trim(),

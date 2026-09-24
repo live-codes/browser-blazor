@@ -96,6 +96,22 @@ const { output } = await runner.run(
 );
 ```
 
+The second argument is the program's stdin, read through the ordinary `Console.ReadLine()` /
+`Console.Read()` / `Console.In` — `null` at end of input, as usual, and a fresh reader per call, so one
+run cannot consume another's input.
+
+```js
+const { output } = await runner.run(
+  'using System;\nConsole.WriteLine("name: " + Console.ReadLine());',
+  'Ada\n',
+);
+```
+
+One quirk worth knowing before you touch it: `Console.In`'s **getter** throws
+`PlatformNotSupportedException` on browser-wasm until something has been set. That is why the runner
+calls `Console.SetIn` and then never reads or restores `In` — saving the previous value is exactly what
+would throw. Reading `Console.In` after that is fine.
+
 ### Routing
 
 ```js
