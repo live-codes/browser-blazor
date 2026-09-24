@@ -17,9 +17,11 @@ public static class CSharpInProcess
         OutputKind outputKind,
         string fileName,
         out Assembly assembly,
+        out int imageLength,
         out DiagnosticInfo[] errors)
     {
         assembly = null;
+        imageLength = 0;
 
         var tree = CSharpSyntaxTree.ParseText(
             source ?? "",
@@ -53,7 +55,9 @@ public static class CSharpInProcess
             return false;
         }
 
-        assembly = Assembly.Load(peStream.ToArray());
+        var image = peStream.ToArray();
+        imageLength = image.Length;
+        assembly = Assembly.Load(image);
         return true;
     }
 }

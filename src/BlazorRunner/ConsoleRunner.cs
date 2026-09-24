@@ -18,7 +18,7 @@ public static class ConsoleRunner
             throw new InvalidOperationException("No reference assemblies loaded.");
         }
 
-        if (!CSharpInProcess.TryCompile(source, OutputKind.ConsoleApplication, "Program.cs", out var assembly, out var errors))
+        if (!CSharpInProcess.TryCompile(source, OutputKind.ConsoleApplication, "Program.cs", out var assembly, out _, out var errors))
         {
             return new RunResult { Success = false, Output = "", Errors = errors };
         }

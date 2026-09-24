@@ -3,8 +3,14 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\make-package.ps1 [-Version 0.1.0] [-SkipPublish]
 #
-# The .br/.gz siblings that a .NET publish emits are dropped: jsDelivr compresses responses
-# itself, so they are dead weight in a package served from a CDN.
+# Two things this does deliberately:
+#   * publishes into a FRESH staging directory, because publishing into a populated output
+#     directory leaves the previous content-hashed assemblies behind (an old
+#     BlazorRunner.<hash>.wasm stays next to the new one, and only one is referenced by
+#     blazor.boot.json) — ~12 MB of dead weight each time;
+#   * copies only the assets a CDN needs, dropping the .br/.gz siblings a .NET publish emits
+#     (jsDelivr compresses responses itself). Copying what we want avoids deleting from the
+#     publish output, which can trip over transient file locks.
 
 param(
     [string]$Version = "0.1.0",
@@ -16,31 +22,42 @@ $ErrorActionPreference = "Stop"
 
 $root = Join-Path $PSScriptRoot ".."
 $project = Join-Path $root "src\BlazorRunner"
-$dist = Join-Path $project "dist"
 $package = Join-Path $root "package"
+$dist = Join-Path $project "dist"
+$staging = $null
 
 if (-not $SkipPublish) {
-    # Start from a clean folder. Publishing into a populated output directory leaves the
-    # previous content-hashed assemblies behind (an old BlazorRunner.<hash>.wasm stays next to
-    # the new one, and only one is referenced by blazor.boot.json) — ~12 MB of dead weight each.
-    if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
+    $staging = Join-Path $project ("obj\package-staging-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 
-    & (Join-Path $DotnetRoot "dotnet.exe") publish $project -c Release -o $dist
+    & (Join-Path $DotnetRoot "dotnet.exe") publish $project -c Release -o $staging
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+
+    $wwwroot = Join-Path $staging "wwwroot"
+}
+else {
+    $wwwroot = Join-Path $dist "wwwroot"
 }
 
-$wwwroot = Join-Path $dist "wwwroot"
 if (-not (Test-Path $wwwroot)) { throw "No publish output at $wwwroot" }
 
-$stale = Get-ChildItem (Join-Path $wwwroot "_framework") -File -Filter "BlazorRunner.*.wasm"
-if ($stale.Count -gt 1) { throw "Publish output has $($stale.Count) BlazorRunner assemblies; expected 1." }
+$frameworks = Get-ChildItem (Join-Path $wwwroot "_framework") -File -Filter "BlazorRunner.*.wasm"
+if ($frameworks.Count -ne 1) {
+    throw "Publish output has $($frameworks.Count) BlazorRunner assemblies; expected 1."
+}
 
-if (Test-Path $package) { Remove-Item $package -Recurse -Force }
-New-Item -ItemType Directory -Path $package | Out-Null
-Copy-Item (Join-Path $wwwroot "*") $package -Recurse
+# /E  = include subdirectories (and empty ones)
+# /PURGE = remove destination files that are no longer in the source, so a stale package
+#          (e.g. from an older layout) cannot linger
+# /XF = exclude the pre-compressed siblings
+# robocopy exit codes below 8 mean success (1 = files copied, 2 = extras removed, ...).
+robocopy $wwwroot $package /E /PURGE /XF *.br *.gz /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
 
-$compressed = Get-ChildItem $package -Recurse -File -Include *.br, *.gz
-$compressed | Remove-Item -Force
+# The layout matters: Blazor resolves its assets relative to the page. Assert the entry points
+# survived rather than shipping a package that silently cannot boot.
+foreach ($required in @("index.html", "_framework\blazor.webassembly.js", "_framework\dotnet.js")) {
+    if (-not (Test-Path (Join-Path $package $required))) { throw "Package is missing $required" }
+}
 
 @{
     name = "@live-codes/blazor-wasm"
@@ -51,6 +68,13 @@ $compressed | Remove-Item -Force
 } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $package "package.json")
 
 $files = Get-ChildItem $package -Recurse -File
+$dropped = (Get-ChildItem $wwwroot -Recurse -File | Where-Object { $_.Extension -in @(".br", ".gz") }).Count
 $size = [math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB, 2)
+
+if ($staging -and (Test-Path $staging)) {
+    Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host "Packaged $($files.Count) files ($size MB) in $package"
-Write-Host "  dropped $($compressed.Count) pre-compressed files"
+Write-Host "  dropped $dropped pre-compressed files"
+

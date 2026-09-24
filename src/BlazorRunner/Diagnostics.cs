@@ -30,6 +30,10 @@ public sealed class DiagnosticInfo
 public sealed class CompileResult
 {
     public System.Type Type { get; set; }
+
+    /// <summary>Size of the emitted assembly, for reporting.</summary>
+    public int Bytes { get; set; }
+
     public DiagnosticInfo[] Errors { get; set; }
 }
 

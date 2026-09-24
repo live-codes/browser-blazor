@@ -19,7 +19,13 @@ public static class ComponentCompiler
             throw new InvalidOperationException("No reference assemblies loaded.");
         }
 
-        if (!CSharpInProcess.TryCompile(source, OutputKind.DynamicallyLinkedLibrary, "Component.cs", out var assembly, out var errors))
+        if (!CSharpInProcess.TryCompile(
+                source,
+                OutputKind.DynamicallyLinkedLibrary,
+                "Component.cs",
+                out var assembly,
+                out var imageLength,
+                out var errors))
         {
             return new CompileResult { Type = null, Errors = errors };
         }
@@ -41,7 +47,7 @@ public static class ComponentCompiler
                         : ""));
             }
 
-            return new CompileResult { Type = named, Errors = Array.Empty<DiagnosticInfo>() };
+            return Ok(named, imageLength);
         }
 
         // Convention: a component named "App" is the root (as in a Blazor project), otherwise
@@ -52,8 +58,11 @@ public static class ComponentCompiler
             return Fail("BLAZOR0001", "No Blazor component found. Declare a class that derives from ComponentBase.");
         }
 
-        return new CompileResult { Type = root, Errors = Array.Empty<DiagnosticInfo>() };
+        return Ok(root, imageLength);
     }
+
+    static CompileResult Ok(Type type, int bytes) =>
+        new CompileResult { Type = type, Bytes = bytes, Errors = Array.Empty<DiagnosticInfo>() };
 
     static CompileResult Fail(string id, string message) =>
         new CompileResult { Type = null, Errors = new[] { DiagnosticInfo.Error(id, message) } };

@@ -40,10 +40,25 @@ public static class BlazorBridge
 
             await DynamicHost.Current.ShowAsync(result.Type);
 
+            // A component can compile cleanly and still throw while rendering; the boundary
+            // catches that, so report it as a failure rather than a success that rendered nothing.
+            var renderError = DynamicHost.Current.LastRenderError;
+            if (renderError is not null)
+            {
+                return Serialize(new RenderResult
+                {
+                    Success = false,
+                    Type = result.Type.FullName,
+                    Bytes = result.Bytes,
+                    Errors = new[] { DiagnosticInfo.Error(renderError.GetType().Name, renderError.Message) },
+                });
+            }
+
             return Serialize(new RenderResult
             {
                 Success = true,
                 Type = result.Type.FullName,
+                Bytes = result.Bytes,
                 Errors = Array.Empty<DiagnosticInfo>(),
             });
         }
@@ -91,5 +106,6 @@ public sealed class RenderResult
 {
     public bool Success { get; set; }
     public string Type { get; set; }
+    public int Bytes { get; set; }
     public DiagnosticInfo[] Errors { get; set; }
 }
