@@ -20,7 +20,9 @@ page.
 
 Or install it: `npm i @live-codes/blazor-wasm`.
 
-Whatever a project renders goes into the element with id `blazor-app`, so give your page one.
+Whatever a project renders goes into an element with id `blazor-app`, which the loader places for you —
+inside the container named by `root`, or `document.body`. A page that wants to position it itself can
+just write `<div id="blazor-app"></div>` where it belongs, and that element is used as it stands.
 
 ## `baseUrl`
 
@@ -33,6 +35,26 @@ script is injected in a way that leaves `document.currentScript` null (a module,
 also keeps the payloads on the same version as the loader, which the unversioned fallback does not.
 
 `create` also takes `onProgress(count)`, called as boot resources are fetched.
+
+## Where it renders
+
+Blazor has no convention for the mount point — a project names the selector in `Program.cs`, as
+`builder.RootComponents.Add<App>("#app")`, and pairs it with a matching element. So here the loader
+decides, and `root` says where the element it renders into should live:
+
+```js
+BlazorRunner.create({ root: '#app' });                            // a container, by selector
+BlazorRunner.create({ root: document.querySelector('#app') });    // or the element itself
+```
+
+The loader puts a `<div id="blazor-app">` inside that container — creating it if it is not already
+there — and Blazor attaches to it at startup. If the page contains an element with that id anywhere, it
+is used as it stands, which is how a page that places it itself keeps working. Omitting `root` uses
+`document.body`.
+
+That element is resolved before `Blazor.start()`, because a root component is attached at startup and
+cannot be moved afterwards, and `runner.rootElement()` returns it once the DOM is ready. A `root`
+selector that matches nothing fails the boot with a clear error rather than guessing.
 
 ## Usage
 
@@ -105,6 +127,7 @@ no `_Imports.razor` needed.
 | Member | Description |
 | --- | --- |
 | `ready()` | resolves once the runtime is up; every call boots on demand, so this is optional |
+| `rootElement()` | the element the app renders into, once the DOM is ready |
 | `renderProject(files, rootComponent?, rootNamespace?)` | compiles and renders a project of `{ filename, content }` files |
 | `renderRazor(source, componentName?)` | compiles and renders a single `.razor` file |
 | `render(source, componentName?)` | compiles and renders a single C# file |

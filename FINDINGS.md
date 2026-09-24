@@ -92,6 +92,13 @@ server logic. .NET 10 / ASP.NET Core 10.0.11, **Roslyn 4.14.0**.
 - **A throwing component cannot take the renderer down.** `DynamicHost` renders inside a
   `HostErrorBoundary`; rendering also waits for the pass to complete, so a render-time exception
   becomes a reported diagnostic instead of a blank area and a bogus success.
+- **The mount point is the loader's decision.** Blazor has no convention of its own: a project names
+  the selector in `Program.cs` (`builder.RootComponents.Add<App>("#app")`, paired with a matching
+  element in the page), or declaratively for Server and Web App projects. Here the host fixes
+  `#blazor-app`, and the loader's `root` option says where that element should be placed — creating it
+  inside the chosen container if it is not already there, before `Blazor.start()`, because a root
+  component is attached at startup and cannot be moved afterwards. A page that places the element
+  itself is left alone.
 - **RenderTreeBuilder frame rule.** `AddComponentReferenceCapture` inserts a frame, so `AddAttribute`
   must come immediately after `OpenComponent` — otherwise *"Attributes may only be added immediately
   after frames of type Element or Component."*

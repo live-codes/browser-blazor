@@ -8,6 +8,10 @@
  *   <script src="https://cdn.jsdelivr.net/npm/@live-codes/blazor-wasm/blazor-wasm.js"></script>
  *   <script>
  *     const runner = BlazorRunner.create();            // defaults to the script's own folder
+ *     const runner = BlazorRunner.create({             // ...or say where the app should render
+ *       baseUrl: '/vendor/blazor-wasm/',
+ *       root: '#app',                                  // a container, or the element itself
+ *     });
  *
  *     // A project: any mix of .razor markup and C#, compiled together, so components can
  *     // reference each other and @page components register routes. Filenames may contain folders;
@@ -37,8 +41,10 @@
  * With @page components, renderProject's `routes` lists them; navigate with
  * `runner.navigateTo('/counter')`.
  *
- * Whatever a project renders into is the element with id `blazor-app`, so give the page one:
- *   <div id="blazor-app"></div>
+ * Whatever a project renders into is an element with id `blazor-app`, inside the container named by
+ * the `root` option (an element or a CSS selector, default `document.body`). If the page already has
+ * an element with that id — anywhere — it is used as it stands, so a page that wants to place it
+ * itself can simply write `<div id="blazor-app"></div>` where it belongs.
  */
 (function (global) {
     'use strict';
@@ -68,11 +74,54 @@
         return typeof json === 'string' ? JSON.parse(json) : json;
     }
 
+    // The host renders into an element with this id. Blazor has no convention of its own here — a
+    // project names the selector in Program.cs — so the loader is what decides where it goes, and the
+    // `root` option says where that element should live.
+    var ROOT_ID = 'blazor-app';
+
+    function containerFor(root) {
+        if (root && typeof root === 'object' && root.nodeType === 1) return root; // an element
+
+        if (typeof root === 'string' && root) {
+            var found = document.querySelector(root);
+            if (!found) {
+                throw new Error(
+                    'BlazorRunner: the `root` option matches no element: ' + JSON.stringify(root),
+                );
+            }
+            return found;
+        }
+
+        return document.body;
+    }
+
+    // A script in <head> can call create() before the body exists.
+    function whenBodyExists() {
+        if (document.body) return Promise.resolve();
+        return new Promise(function (resolve) {
+            document.addEventListener('DOMContentLoaded', resolve, { once: true });
+        });
+    }
+
+    function rootElementIn(container) {
+        // The container may be the root itself, and then nothing is created.
+        if (container.id === ROOT_ID) return container;
+
+        var existing = container.querySelector('#' + ROOT_ID);
+        if (existing) return existing;
+
+        var element = document.createElement('div');
+        element.id = ROOT_ID;
+        container.appendChild(element);
+        return element;
+    }
+
     function create(options) {
         var opts = options || {};
         var baseUrl = toBaseUrl(opts.baseUrl || global.BlazorWasmBaseUrl || scriptBaseUrl || DEFAULT_BASE_URL);
         var resourceCount = 0;
         var bootPromise = null;
+        var rootElement = null;
 
         // CDNs reject credentialed requests, and Blazor's fetches must not carry any.
         var originalFetch = global.fetch;
@@ -83,6 +132,18 @@
             }
             return originalFetch(resource, init);
         };
+
+        // Resolve — and if need be create — the element the app renders into. This has to happen
+        // before Blazor.start(), because the root component is attached at startup and cannot be
+        // moved afterwards.
+        function prepareRoot() {
+            if (rootElement) return Promise.resolve(rootElement);
+
+            return whenBodyExists().then(function () {
+                rootElement = rootElementIn(containerFor(opts.root));
+                return rootElement;
+            });
+        }
 
         function loadScript() {
             return new Promise(function (resolve, reject) {
@@ -101,7 +162,8 @@
 
         function boot() {
             if (bootPromise) return bootPromise;
-            bootPromise = loadScript()
+            bootPromise = prepareRoot()
+                .then(loadScript)
                 .then(function () {
                     return global.Blazor.start({
                         loadBootResource: function (_type, name) {
@@ -166,7 +228,7 @@
 
             assetMap = result.assets;
 
-            var root = document.getElementById('blazor-app');
+            var root = rootElement;
             if (!root) return;
 
             applyAssets(root, assetMap);
@@ -227,6 +289,10 @@
 
         return {
             baseUrl: baseUrl,
+            /** The element the app renders into, once the DOM is ready — see the `root` option. */
+            rootElement: function () {
+                return rootElement;
+            },
             /** Resolves once the runtime is up. Optional: every call boots on demand. */
             ready: function () {
                 return boot();
