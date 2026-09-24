@@ -136,7 +136,7 @@ Called from the page with `DotNet.invokeMethodAsync('BlazorRunner', …)`:
 | `RenderComponent(source, rootType)` | Same, for a single C# file. |
 | `NavigateTo(url)` | Drives the host's `NavigationManager`, for `@page` routing. |
 | `RunCode(source, stdin)` | `{ success, output, errors[] }` — compiles and runs a console program, capturing stdout. |
-| `ReferenceCount()` | number of embedded reference assemblies. |
+| `ReferenceCount()` | reference assemblies the compiler has loaded, fetching them if it has not yet. |
 
 A component that throws *while rendering* comes back as `success: false` with the exception in
 `errors`. Diagnostics from generated Razor code are mapped back to the `.razor` source lines.
@@ -145,7 +145,7 @@ A component that throws *while rendering* comes back as `success: false` with th
 
 | File | Role |
 | ---- | ---- |
-| `Program.cs` | Builds the host; mounts the root component at `#blazor-app`; loads the embedded reference assemblies. |
+| `Program.cs` | Builds the host and mounts the root component at `#blazor-app`. |
 | `DynamicHost.cs` | The fixed root component — renders whatever component was last compiled, via `RenderTreeBuilder.OpenComponent(int, Type)`, inside an error boundary. Also exposes `NavigateTo`. |
 | `HostErrorBoundary.cs` | An `ErrorBoundary` that keeps the exception it caught so the host can report it. |
 | `HostRouter.cs` | Fallback root for projects with `@page` components but no component to host them: routes over the compiled assembly. |
@@ -154,7 +154,8 @@ A component that throws *while rendering* comes back as `success: false` with th
 | `CSharpInProcess.cs` | Shared compile path: parse → `CSharpCompilation.Create` → `Emit` → `Assembly.Load`. |
 | `ComponentCompiler.cs` | Project compilation and root-component resolution. |
 | `ConsoleRunner.cs` | Console mode: entry point invocation with `Console` captured. |
-| `ReferenceAssemblies.cs` | The embedded BCL + ASP.NET Core reference assemblies. |
+| `ReferenceAssemblies.cs` | The BCL + ASP.NET Core reference assemblies, fetched as a payload on first compile. |
+| `Payload.cs` | Fetches and unzips the compiler's payloads (`refs.zip`, `razor.zip`) from the bundle's base URL. |
 | `Diagnostics.cs` | `DiagnosticInfo` / `SourceFile` / `CompileResult` / `RunResult`. |
 | `BlazorBridge.cs` | The `[JSInvokable]` surface. |
 | `wwwroot/blazor-wasm.js` | The loader shipped in the package. |
@@ -222,13 +223,17 @@ A component that throws *while rendering* comes back as `success: false` with th
 - **A throwing component cannot take the renderer down.** `DynamicHost` renders inside a
   `HostErrorBoundary`; rendering also waits for the pass to complete, so a render-time exception
   becomes a reported diagnostic instead of a blank area and a bogus success.
-- **Reference assemblies are embedded**, not fetched: `prepare-refs.ps1` copies 308 DLLs (11.9 MB)
-  from `Microsoft.NETCore.App.Ref`, `Microsoft.AspNetCore.App.Ref` and the
-  `Microsoft.AspNetCore.Components.WebAssembly` package into `refs/`, embedded as `lib.*` resources.
-  Earlier sources win name overlaps. The Blazor WebAssembly assemblies have to come from the package
-  because the ASP.NET Core ref pack does not contain them — without them a project cannot use
-  namespaces such as `Microsoft.AspNetCore.Components.WebAssembly.Http`, which the template's
-  `_Imports.razor` expects.
+- **The compiler's bulk payloads are fetched, not embedded.** `prepare-refs.ps1` copies 308 DLLs
+  (11.9 MB) from `Microsoft.NETCore.App.Ref`, `Microsoft.AspNetCore.App.Ref` and the
+  `Microsoft.AspNetCore.Components.WebAssembly` package into `refs/`; earlier sources win name
+  overlaps. The Blazor WebAssembly assemblies have to come from the package because the ASP.NET Core
+  ref pack does not contain them — without them a project cannot use namespaces such as
+  `Microsoft.AspNetCore.Components.WebAssembly.Http`, which the template's `_Imports.razor` expects.
+  `make-package.ps1` packs those plus the Razor compiler into `refs.zip` and `razor.zip` beside the
+  app, and `Payload.cs` fetches them on first use (5.3 MB + 1.8 MB deflated). Embedded they were
+  ~16 MB of the app assembly, which the browser cannot start without; split out, the app assembly is
+  50 KB, the page paints sooner, a console-only session never downloads the Razor compiler, and the
+  payloads keep their own URLs so rebuilding the app no longer invalidates them in the HTTP cache.
 - **`PublishTrimmed=false`** — the compiled user assembly resolves against the full BCL and ASP.NET
   Core at runtime, so nothing may be linked away.
 - **A fresh assembly identity per compile** (`User_<guid>`) — two assemblies with the same name in the
@@ -267,9 +272,22 @@ Checked in a real browser (headless Chrome via CDP), against the packaged output
 
 ### Size and limitations
 
-- **Bundle size.** ~58 MB in `package/` (238 files): ~36 MB the .NET + ASP.NET Core runtime, ~9 MB
-  Roslyn, ~4 MB the Razor compiler, ~16 MB the app assembly with the embedded reference assemblies and
-  the Razor compiler DLLs.
+- **Bundle size.** ~49 MB in `package/` (240 files): ~34 MB the .NET + ASP.NET Core runtime and ~9 MB
+  Roslyn, both fetched at startup; ~5.3 MB `refs.zip` and ~1.8 MB `razor.zip`, fetched on first
+  compile; and a 50 KB app assembly. Startup fetches **34.0 MB across 207 files**, down from 50.1 MB
+  before the payload split, and the first compile adds 7.1 MB of payloads.
+- **Lazy loading does not pay off here (measured).** `<BlazorWebAssemblyLazyLoad>` does split the boot
+  manifest — 63 lazy / 136 eager, and 144 files / 45.8 MB fetched at startup instead of 207 / 50.1 MB —
+  but it is unsafe in this host, for two independent reasons. First, a type's fields and base types are
+  resolved when the type *loads*, and static constructors run during type initialisation; a lazy fetch
+  cannot service either, so deferring `System.Collections.Concurrent` breaks on
+  `JSRuntime._pendingTasks` and deferring `System.Runtime.Loader` breaks in `HotReloadManager..cctor`
+  (both runtime boot failures, not build errors). Second, and decisively, **no fetch is ever attempted
+  on demand**: code compiled here is loaded with `Assembly.Load(bytes)`, and a deferred dependency of it
+  fails with `FileNotFoundException` and no network request at all — so deferring anything user code may
+  reference silently breaks programs that used to work. A conservative defer list saves only ~4 MB
+  (~8%), and the bulk that remains — Roslyn (~9 MB), CoreLib (~4.7 MB), the Blazor host — has to be
+  eager anyway. Trimming is not an alternative either: user code may reference any BCL type.
 - **First Razor compile is slow** (~4–5 s vs ~0.2 s for C#) while the Razor generator warms up. Warm
   renders are tens of milliseconds.
 - **Stale `obj/` silently keeps an old package.** A `PackageReference` version change does not always
@@ -297,7 +315,7 @@ language and Blazor from one copy of Roslyn, the .NET runtime and the BCL refere
 
 What that costs, so it is a deliberate choice:
 
-- **Size.** One ~58 MB bundle instead of `csharp-wasm`'s ~40 MB. Two bundles would be ~40 + ~58 MB, so
+- **Size.** One ~49 MB bundle instead of `csharp-wasm`'s ~40 MB. Two bundles would be ~40 + ~49 MB, so
   consolidation wins as soon as Blazor is used at all.
 - **LiveCodes glue, when we get there.** The `csharp-wasm` script hard-codes the `MyRunnyApp` assembly
   name and its bundle URL is pinned in `vendors.ts`; both would point here. The result shape also
@@ -312,4 +330,5 @@ What that costs, so it is a deliberate choice:
 - **Route parameters** — `@page "/item/{id:int}"` transpiles; the matched values are untested.
 - **Revisit Roslyn 5.9.** The pin to 4.14 is what makes Roslyn run under wasm; if that is fixed there,
   the embed-and-load dance could be replaced by a plain reference.
-- **Shrink the bundle** — the untrimmed runtime and the embedded reference assemblies dominate.
+- **Shrink the bundle further** — the reference assemblies and the Razor compiler are fetched on demand
+  now, but the untrimmed runtime and Roslyn still dominate what startup downloads.

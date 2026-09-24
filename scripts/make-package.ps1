@@ -59,6 +59,53 @@ foreach ($required in @("index.html", "_framework\blazor.webassembly.js", "_fram
     if (-not (Test-Path (Join-Path $package $required))) { throw "Package is missing $required" }
 }
 
+# The compiler's bulk payloads travel beside the app rather than inside it. Embedded, they put
+# ~16 MB into the app assembly, which the browser must download before the app can start; as
+# payloads the runtime boots against a small assembly and fetches these on first use, and the
+# browser caches them across rebuilds of the app. See Payload.cs.
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+function New-Payload([string]$zipPath, [string[]]$files) {
+    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+
+    $archive = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in $files) {
+            # CreateEntryFromFile throws if a source is missing, which is what we want here.
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $archive,
+                $file,
+                [System.IO.Path]::GetFileName($file),
+                [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+
+    Write-Host "  $([System.IO.Path]::GetFileName($zipPath)): $($files.Count) entries"
+}
+
+New-Payload (Join-Path $package "refs.zip") @(
+    (Get-ChildItem (Join-Path $project "refs") -File -Filter *.dll | ForEach-Object FullName)
+)
+
+# The Razor compiler is not a package: it ships inside the SDK, so ask MSBuild which SDK the build
+# just used rather than guessing at the version directory.
+$sdkPath = (& (Join-Path $DotnetRoot "dotnet.exe") msbuild $project -nologo -getProperty:MSBuildSDKsPath |
+    Select-Object -Last 1).Trim()
+$generators = Join-Path $sdkPath "Microsoft.NET.Sdk.Razor\source-generators"
+
+New-Payload (Join-Path $package "razor.zip") @(
+    (Join-Path $generators "Microsoft.CodeAnalysis.Razor.Compiler.dll"),
+    (Join-Path $generators "Microsoft.AspNetCore.Razor.Utilities.Shared.dll")
+)
+
+foreach ($required in @("refs.zip", "razor.zip")) {
+    if (-not (Test-Path (Join-Path $package $required))) { throw "Package is missing $required" }
+}
+
 @{
     name = "@live-codes/blazor-wasm"
     version = $Version

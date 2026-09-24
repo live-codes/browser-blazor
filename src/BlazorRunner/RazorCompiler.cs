@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
@@ -54,70 +54,60 @@ public static class RazorCompiler
         "@using Microsoft.JSInterop\n" +
         "@using " + rootNamespace + "\n";
 
-    static readonly string[] CompilerResources =
-    {
-        "razor.Microsoft.AspNetCore.Razor.Utilities.Shared.dll",
-        "razor.Microsoft.CodeAnalysis.Razor.Compiler.dll",
-    };
-
     const string UtilitiesAssemblyName = "Microsoft.AspNetCore.Razor.Utilities.Shared";
+
+    const string GeneratorAssemblyName = "Microsoft.CodeAnalysis.Razor.Compiler.dll";
 
     static IIncrementalGenerator _generator;
 
     static Assembly _utilities;
 
     /// <summary>
-    /// Loads the Razor compiler from the resources embedded in this assembly and creates its source
-    /// generator.
+    /// Fetches the Razor compiler payload and creates its source generator, once. Only markup needs
+    /// this, so a project that is all C# never downloads it.
     ///
     /// It is loaded from bytes rather than referenced: an assembly reference makes MSBuild resolve
     /// the Razor compiler's own Roslyn dependency (5.9) out of the SDK and publish it, and Roslyn
     /// 5.9 aborts the WebAssembly runtime. Loaded this way it binds by simple name against the
     /// Roslyn already in the app (4.14), which runs.
     /// </summary>
-    static IIncrementalGenerator GetGenerator()
+    public static async Task EnsureLoadedAsync()
     {
         if (_generator is not null)
         {
-            return _generator;
+            return;
         }
 
-        var host = typeof(RazorCompiler).Assembly;
-        Assembly razorAssembly = null;
+        var entries = await Payload.GetAsync(Payload.RazorCompiler);
 
-        foreach (var resource in CompilerResources)
+        if (!entries.TryGetValue(UtilitiesAssemblyName + ".dll", out var utilities))
         {
-            using var stream = host.GetManifestResourceStream(resource);
-            if (stream is null)
-            {
-                throw new InvalidOperationException($"The bundle is missing '{resource}'.");
-            }
-
-            using var buffer = new MemoryStream();
-            stream.CopyTo(buffer);
-
-            var loaded = Assembly.Load(buffer.ToArray());
-            if (resource.IndexOf("Razor.Compiler", StringComparison.Ordinal) >= 0)
-            {
-                razorAssembly = loaded;
-            }
-            else
-            {
-                _utilities = loaded;
-            }
+            throw new InvalidOperationException("The Razor payload is missing " + UtilitiesAssemblyName + ".dll.");
         }
+
+        if (!entries.TryGetValue(GeneratorAssemblyName, out var compiler))
+        {
+            throw new InvalidOperationException("The Razor payload is missing " + GeneratorAssemblyName + ".");
+        }
+
+        _utilities = Assembly.Load(utilities);
 
         // An assembly loaded from bytes is not discoverable by name, so the compiler's own
         // dependency on the utilities assembly has to be resolved explicitly.
         AssemblyLoadContext.Default.Resolving += (_, name) =>
             name.Name == UtilitiesAssemblyName ? _utilities : null;
 
+        var razorAssembly = Assembly.Load(compiler);
+
         var type = razorAssembly.GetType(GeneratorTypeName, throwOnError: false)
             ?? throw new InvalidOperationException("The Razor compiler has no " + GeneratorTypeName + ".");
 
         _generator = (IIncrementalGenerator)Activator.CreateInstance(type);
-        return _generator;
     }
+
+    static IIncrementalGenerator GetGenerator() =>
+        _generator ?? throw new InvalidOperationException(
+            "The Razor compiler has not been fetched yet; call EnsureLoadedAsync first.");
 
     /// <summary>Generates the C# for every <c>.razor</c> file of a project. They are handed to the
     /// generator together, which is what lets components in different files reference each other

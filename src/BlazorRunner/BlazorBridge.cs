@@ -24,7 +24,7 @@ public static class BlazorBridge
     /// <paramref name="rootType"/> optionally names the component to render, and
     /// <paramref name="rootNamespace"/> the project's namespace (folder namespaces hang off it).</summary>
     [JSInvokable]
-    public static Task<string> RenderProject(string filesJson, string rootType, string rootNamespace)
+    public static async Task<string> RenderProject(string filesJson, string rootType, string rootNamespace)
     {
         SourceFile[] files;
         try
@@ -34,44 +34,53 @@ public static class BlazorBridge
         }
         catch (JsonException ex)
         {
-            return Task.FromResult(Serialize(new RenderResult
+            return Serialize(new RenderResult
             {
                 Success = false,
                 Errors = new[] { DiagnosticInfo.Error("JSON", ex.Message) },
-            }));
+            });
         }
 
         var name = string.IsNullOrEmpty(rootNamespace) ? RazorCompiler.DefaultRootNamespace : rootNamespace;
-        return Render(() => ComponentCompiler.Compile(files, rootType, name), ProjectAssets.Collect(files));
+        var assets = ProjectAssets.Collect(files);
+
+        return await Render(
+            () => ComponentCompiler.EnsureLoadedAsync(files),
+            () => ComponentCompiler.Compile(files, rootType, name),
+            assets);
     }
 
     /// <summary>Compiles and renders a single component written as C#.</summary>
     [JSInvokable]
-    public static Task<string> RenderComponent(string source, string rootType) =>
-        Render(
-            () => ComponentCompiler.Compile(
-                new[] { new SourceFile { Filename = "Components.cs", Content = source ?? "" } },
-                rootType,
-                RazorCompiler.DefaultRootNamespace),
+    public static Task<string> RenderComponent(string source, string rootType)
+    {
+        var files = new[] { new SourceFile { Filename = "Components.cs", Content = source ?? "" } };
+
+        return Render(
+            () => ComponentCompiler.EnsureLoadedAsync(files),
+            () => ComponentCompiler.Compile(files, rootType, RazorCompiler.DefaultRootNamespace),
             NoAssets);
+    }
 
     /// <summary>Compiles and renders a single component written as <c>.razor</c> markup.
     /// <paramref name="componentName"/> names the generated class, and defaults to "App".</summary>
     [JSInvokable]
-    public static Task<string> RenderRazor(string source, string componentName) =>
-        Render(
-            () => ComponentCompiler.Compile(
-                new[]
-                {
-                    new SourceFile
-                    {
-                        Filename = (string.IsNullOrEmpty(componentName) ? "App" : componentName) + ".razor",
-                        Content = source ?? "",
-                    },
-                },
-                componentName,
-                RazorCompiler.DefaultRootNamespace),
+    public static Task<string> RenderRazor(string source, string componentName)
+    {
+        var files = new[]
+        {
+            new SourceFile
+            {
+                Filename = (string.IsNullOrEmpty(componentName) ? "App" : componentName) + ".razor",
+                Content = source ?? "",
+            },
+        };
+
+        return Render(
+            () => ComponentCompiler.EnsureLoadedAsync(files),
+            () => ComponentCompiler.Compile(files, componentName, RazorCompiler.DefaultRootNamespace),
             NoAssets);
+    }
 
     /// <summary>Drives the host's NavigationManager, so <c>@page</c> routing can be exercised from
     /// the page.</summary>
@@ -90,6 +99,8 @@ public static class BlazorBridge
     {
         try
         {
+            await ReferenceAssemblies.EnsureLoadedAsync();
+
             var result = await ConsoleRunner.Run(source, stdin);
             return JsonSerializer.Serialize(result, JsonOptions);
         }
@@ -106,13 +117,44 @@ public static class BlazorBridge
         }
     }
 
+    /// <summary>The bundle's base URL, pushed in by blazor-wasm.js once the runtime is up. The
+    /// compiler payloads are fetched relative to it, not to the page.</summary>
     [JSInvokable]
-    public static int ReferenceCount() => ReferenceAssemblies.Count;
+    public static void SetBaseUrl(string baseUrl) => Payload.BaseUrl = baseUrl ?? "";
 
-    static async Task<string> Render(Func<CompileResult> compile, Dictionary<string, string> assets)
+    /// <summary>How many reference assemblies are loaded, fetching them if they are not yet — the
+    /// page uses this as a readiness check.</summary>
+    [JSInvokable]
+    public static async Task<int> ReferenceCount()
+    {
+        await ReferenceAssemblies.EnsureLoadedAsync();
+        return ReferenceAssemblies.Count;
+    }
+
+    /// <summary>The host instance exists only once the app's first render has run, which can be
+    /// after the first interop call arrives. Wait briefly for it rather than failing a render that
+    /// would otherwise succeed.</summary>
+    static async Task<DynamicHost> WaitForHostAsync()
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            if (DynamicHost.Current is not null)
+            {
+                return DynamicHost.Current;
+            }
+
+            await Task.Delay(50);
+        }
+
+        return null;
+    }
+
+    static async Task<string> Render(Func<Task> ensure, Func<CompileResult> compile, Dictionary<string, string> assets)
     {
         try
         {
+            await ensure();
+
             var result = compile();
 
             if (result.Type is null)
@@ -120,7 +162,8 @@ public static class BlazorBridge
                 return Serialize(new RenderResult { Success = false, Errors = result.Errors });
             }
 
-            if (DynamicHost.Current is null)
+            var host = await WaitForHostAsync();
+            if (host is null)
             {
                 return Serialize(new RenderResult
                 {
@@ -129,11 +172,11 @@ public static class BlazorBridge
                 });
             }
 
-            await DynamicHost.Current.ShowAsync(result.Type, result.Styles);
+            await host.ShowAsync(result.Type, result.Styles);
 
             // A component can compile cleanly and still throw while rendering; the boundary
             // catches that, so report it as a failure rather than a success that rendered nothing.
-            var renderError = DynamicHost.Current.LastRenderError;
+            var renderError = host.LastRenderError;
             if (renderError is not null)
             {
                 return Serialize(new RenderResult

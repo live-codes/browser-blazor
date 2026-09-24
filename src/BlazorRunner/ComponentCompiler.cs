@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components;
 using Microsoft.CodeAnalysis;
 
@@ -16,6 +17,23 @@ using Microsoft.CodeAnalysis;
 /// </summary>
 public static class ComponentCompiler
 {
+    /// <summary>Fetches whatever this project needs before it can be compiled: the reference
+    /// assemblies always, the Razor compiler only when there is markup. Awaited by the bridge so a
+    /// failed download surfaces as a diagnostic rather than an interop rejection.</summary>
+    public static async Task EnsureLoadedAsync(SourceFile[] files)
+    {
+        await ReferenceAssemblies.EnsureLoadedAsync();
+
+        var hasMarkup = (files ?? Array.Empty<SourceFile>()).Any(file =>
+            file?.Filename is not null &&
+            file.Filename.EndsWith(".razor", StringComparison.OrdinalIgnoreCase));
+
+        if (hasMarkup)
+        {
+            await RazorCompiler.EnsureLoadedAsync();
+        }
+    }
+
     /// <summary>Compiles the project and resolves the root component. <paramref name="rootTypeName"/>
     /// is optional: by convention a component named "App" is the root; with no App but with
     /// <c>@page</c> components, a router over the compiled assembly is used instead; otherwise the

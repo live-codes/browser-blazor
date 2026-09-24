@@ -107,6 +107,11 @@
                         },
                     });
                 })
+                .then(function () {
+                    // The bundle's base URL, not the page's: the compiler's payloads (refs.zip,
+                    // razor.zip) sit beside this script, which need not be the page's origin.
+                    return invoke('SetBaseUrl', [baseUrl]);
+                })
                 .catch(function (err) {
                     bootPromise = null;
                     throw err;
@@ -247,7 +252,8 @@
             run: function (source, stdin) {
                 return call('RunCode', [source || '', stdin || '']);
             },
-            /** Number of embedded reference assemblies (a quick readiness check). */
+            /** Number of reference assemblies the compiler has loaded; fetches them if it has not
+             *  yet, so this doubles as a readiness check. */
             referenceCount: function () {
                 return call('ReferenceCount', []);
             },
