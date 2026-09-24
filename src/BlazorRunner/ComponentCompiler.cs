@@ -61,6 +61,37 @@ public static class ComponentCompiler
         return Ok(root, imageLength);
     }
 
+    /// <summary>Compiles a component written as <c>.razor</c> markup: markup to C# via the Razor
+    /// generator, then that C# to an assembly. <paramref name="componentName"/> names the generated
+    /// class (the Razor file name determines it), defaulting to "App".</summary>
+    public static CompileResult CompileRazor(string razorSource, string componentName)
+    {
+        var name = string.IsNullOrEmpty(componentName) ? "App" : componentName;
+
+        if (!RazorCompiler.TryGenerate(razorSource, name + ".razor", out var generated, out var razorErrors))
+        {
+            return new CompileResult { Type = null, Errors = razorErrors };
+        }
+
+        if (!CSharpInProcess.TryCompile(
+                generated,
+                OutputKind.DynamicallyLinkedLibrary,
+                name + ".g.cs",
+                out var assembly,
+                out var imageLength,
+                out var errors))
+        {
+            return new CompileResult { Type = null, Errors = errors };
+        }
+
+        var type = GetLoadableTypes(assembly)
+            .FirstOrDefault(t => typeof(IComponent).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface);
+
+        return type is null
+            ? Fail("BLAZOR0001", "No Blazor component found in the generated code.")
+            : Ok(type, imageLength);
+    }
+
     static CompileResult Ok(Type type, int bytes) =>
         new CompileResult { Type = type, Bytes = bytes, Errors = Array.Empty<DiagnosticInfo>() };
 

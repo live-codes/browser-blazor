@@ -1,0 +1,13 @@
+@using Microsoft.AspNetCore.Components
+
+<h1>Hello from Razor</h1>
+
+<p>Count: @count</p>
+
+<button @onclick="Increment">Click me</button>
+
+@code {
+    int count;
+
+    void Increment() => count++;
+}

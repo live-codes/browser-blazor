@@ -11,7 +11,9 @@ public sealed class DiagnosticInfo
 
     public static DiagnosticInfo From(Diagnostic diagnostic)
     {
-        var span = diagnostic.Location.GetLineSpan();
+        // Mapped so diagnostics from generated Razor code point back at the .razor source,
+        // which the generator marks up with #line directives.
+        var span = diagnostic.Location.GetMappedLineSpan();
         return new DiagnosticInfo
         {
             Id = diagnostic.Id,

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>RazorProto</AssemblyName>
+    <!-- The Razor compiler ships as a source generator inside the SDK. -->
+    <RazorCompilerDir>$(MSBuildSDKsPath)\Microsoft.NET.Sdk.Razor\source-generators</RazorCompilerDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+    <Reference Include="Microsoft.CodeAnalysis.Razor.Compiler">
+      <HintPath>$(RazorCompilerDir)\Microsoft.CodeAnalysis.Razor.Compiler.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.AspNetCore.Razor.Utilities.Shared">
+      <HintPath>$(RazorCompilerDir)\Microsoft.AspNetCore.Razor.Utilities.Shared.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

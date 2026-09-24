@@ -14,15 +14,50 @@ public static class BlazorBridge
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
-    /// <summary>Compiles and renders a Blazor component. <paramref name="rootType"/> is an
-    /// optional component name; when empty the component named "App" is used, else the first.
-    /// Returns <c>{ success, type, errors[] }</c>.</summary>
+    /// <summary>Compiles and renders a component written as C#. <paramref name="rootType"/> is an
+    /// optional component name; when empty the component named "App" is used, else the first.</summary>
     [JSInvokable]
-    public static async Task<string> RenderComponent(string source, string rootType)
+    public static Task<string> RenderComponent(string source, string rootType) =>
+        Render(() => ComponentCompiler.Compile(source, rootType));
+
+    /// <summary>Compiles and renders a component written as <c>.razor</c> markup.
+    /// <paramref name="componentName"/> names the generated class, and defaults to "App".</summary>
+    [JSInvokable]
+    public static Task<string> RenderRazor(string source, string componentName) =>
+        Render(() => ComponentCompiler.CompileRazor(source, componentName));
+
+    /// <summary>Compiles and runs a C# console program, capturing stdout. Returns
+    /// <c>{ success, output, errors[] }</c> — the same field names the LiveCodes
+    /// 'csharp-wasm' language consumes, so one bundle can back both.</summary>
+    [JSInvokable]
+    public static async Task<string> RunCode(string source, string stdin)
     {
         try
         {
-            var result = ComponentCompiler.Compile(source, rootType);
+            var result = await ConsoleRunner.Run(source, stdin);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(
+                new RunResult
+                {
+                    Success = false,
+                    Output = "",
+                    Errors = new[] { DiagnosticInfo.Error(ex.GetType().Name, ex.Message) },
+                },
+                JsonOptions);
+        }
+    }
+
+    [JSInvokable]
+    public static int ReferenceCount() => ReferenceAssemblies.Count;
+
+    static async Task<string> Render(Func<CompileResult> compile)
+    {
+        try
+        {
+            var result = compile();
 
             if (result.Type is null)
             {
@@ -71,33 +106,6 @@ public static class BlazorBridge
             });
         }
     }
-
-    /// <summary>Compiles and runs a C# console program, capturing stdout. Returns
-    /// <c>{ success, output, errors[] }</c> — the same field names the LiveCodes
-    /// 'csharp-wasm' language consumes, so one bundle can back both.</summary>
-    [JSInvokable]
-    public static async Task<string> RunCode(string source, string stdin)
-    {
-        try
-        {
-            var result = await ConsoleRunner.Run(source, stdin);
-            return JsonSerializer.Serialize(result, JsonOptions);
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(
-                new RunResult
-                {
-                    Success = false,
-                    Output = "",
-                    Errors = new[] { DiagnosticInfo.Error(ex.GetType().Name, ex.Message) },
-                },
-                JsonOptions);
-        }
-    }
-
-    [JSInvokable]
-    public static int ReferenceCount() => ReferenceAssemblies.Count;
 
     static string Serialize(RenderResult result) => JsonSerializer.Serialize(result, JsonOptions);
 }

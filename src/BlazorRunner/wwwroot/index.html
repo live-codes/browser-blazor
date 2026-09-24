@@ -88,15 +88,15 @@
         overflow: auto;
       }
       #stage { flex: 1; padding: 16px; overflow: auto; }
-      #stage .host-error {
-        margin: 0;
-        padding: 12px;
-        border: 1px solid #6b2f38;
+      #stage button {
+        background: var(--accent);
+        color: #0d0f14;
+        border: 0;
         border-radius: 8px;
-        background: #2a1a1e;
-        color: var(--error);
-        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        white-space: pre-wrap;
+        padding: 8px 16px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
       }
       #diagnostics {
         padding: 10px 12px;
@@ -109,8 +109,7 @@
       }
       #diagnostics:empty { display: none; }
       footer { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-      #root {
-        width: 130px;
+      select, #root {
         background: var(--panel);
         border: 1px solid var(--border);
         border-radius: 8px;
@@ -119,7 +118,8 @@
         font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         outline: none;
       }
-      button {
+      #root { width: 120px; }
+      #render {
         background: var(--accent);
         color: #0d0f14;
         border: 0;
@@ -129,7 +129,7 @@
         font-weight: 600;
         cursor: pointer;
       }
-      button:disabled { opacity: 0.5; cursor: default; }
+      #render:disabled { opacity: 0.5; cursor: default; }
       .hint { color: var(--muted); font-size: 12px; }
     </style>
   </head>
@@ -137,21 +137,21 @@
     <header>
       <h1>Blazor component playground</h1>
       <span class="subtitle"
-        >write Blazor components in C# — Roslyn compiles them in this page and they render on the
-        real Blazor renderer, no server</span
+        >write a component in Razor or C# — it is compiled in this page and rendered on the real
+        Blazor renderer, no server</span
       >
       <span id="status">starting…</span>
     </header>
 
     <main>
       <section>
-        <div class="section-head"><span>Components.cs</span></div>
+        <div class="section-head"><span id="file-name">Component.razor</span></div>
         <textarea id="code" spellcheck="false"></textarea>
       </section>
       <section>
         <div class="section-head"><span>Rendered component</span></div>
         <div id="stage">
-          <!-- The app's root component mounts here. -->
+          <!-- The rendered component mounts here. -->
           <div id="blazor-app"></div>
         </div>
         <pre id="diagnostics"></pre>
@@ -160,117 +160,107 @@
 
     <footer>
       <button id="render" disabled>Render</button>
-      <label class="hint" for="root">root component</label>
-      <input id="root" placeholder="App" autocomplete="off" spellcheck="false" />
+      <select id="language">
+        <option value="razor">Razor</option>
+        <option value="csharp">C#</option>
+      </select>
+      <label class="hint" for="root">component name</label>
+      <input id="root" value="App" autocomplete="off" spellcheck="false" />
       <span class="hint">Ctrl/Cmd + Enter to render</span>
     </footer>
 
-    <script src="_framework/blazor.webassembly.js" autostart="false"></script>
+    <script src="blazor-wasm.js"></script>
     <script>
-      var SAMPLE = [
-        'using System;',
-        'using Microsoft.AspNetCore.Components;',
-        'using Microsoft.AspNetCore.Components.Rendering;',
-        'using Microsoft.AspNetCore.Components.Web;',
-        '',
-        '// A child component, used by the root below.',
-        'public class Counter : ComponentBase',
-        '{',
-        '    int count;',
-        '',
-        '    void Increment() => count++;',
-        '',
-        '    protected override void BuildRenderTree(RenderTreeBuilder builder)',
-        '    {',
-        '        builder.OpenElement(0, "button");',
-        '        builder.AddAttribute(1, "onclick",',
-        '            EventCallback.Factory.Create<MouseEventArgs>(this, Increment));',
-        '        builder.AddContent(2, $"Clicked {count} times");',
-        '        builder.CloseElement();',
-        '    }',
-        '}',
-        '',
-        '// The root component. A component named "App" is picked by default;',
-        '// put another name in the "root component" box to render that one instead.',
-        'public class App : ComponentBase',
-        '{',
-        '    protected override void BuildRenderTree(RenderTreeBuilder builder)',
-        '    {',
-        '        builder.OpenElement(0, "div");',
-        '        builder.AddAttribute(1, "style", "text-align:center; font-family:sans-serif");',
-        '',
-        '        builder.OpenElement(2, "h1");',
-        '        builder.AddContent(3, "A parent component");',
-        '        builder.CloseElement();',
-        '',
-        '        builder.OpenComponent<Counter>(4);',
-        '        builder.CloseComponent();',
-        '',
-        '        builder.CloseElement();',
-        '    }',
-        '}',
-        '',
-      ].join('\n');
+      var SAMPLES = {
+        razor: [
+          '<h1>Hello from Razor</h1>',
+          '',
+          '<p>You clicked <strong>@count</strong> times.</p>',
+          '',
+          '<button @onclick="Increment">Click me</button>',
+          '',
+          '@code {',
+          '    int count;',
+          '',
+          '    void Increment() => count++;',
+          '}',
+          '',
+        ].join('\n'),
+
+        csharp: [
+          'using System;',
+          'using Microsoft.AspNetCore.Components;',
+          'using Microsoft.AspNetCore.Components.Rendering;',
+          '',
+          '// A child component, used by the root below.',
+          'public class Counter : ComponentBase',
+          '{',
+          '    int count;',
+          '',
+          '    protected override void BuildRenderTree(RenderTreeBuilder builder)',
+          '    {',
+          '        builder.OpenElement(0, "button");',
+          '        builder.AddAttribute(1, "onclick",',
+          '            EventCallback.Factory.Create<Microsoft.AspNetCore.Components.Web.MouseEventArgs>(this, () => count++));',
+          '        builder.AddContent(2, $"Clicked {count} times");',
+          '        builder.CloseElement();',
+          '    }',
+          '}',
+          '',
+          'public class App : ComponentBase',
+          '{',
+          '    protected override void BuildRenderTree(RenderTreeBuilder builder)',
+          '    {',
+          '        builder.OpenElement(0, "div");',
+          '        builder.AddAttribute(1, "style", "text-align:center; font-family:sans-serif");',
+          '        builder.OpenElement(2, "h1");',
+          '        builder.AddContent(3, "Hello from C#");',
+          '        builder.CloseElement();',
+          '        builder.OpenComponent<Counter>(4);',
+          '        builder.CloseComponent();',
+          '        builder.CloseElement();',
+          '    }',
+          '}',
+          '',
+        ].join('\n'),
+      };
+
+      var FILE_NAME = { razor: 'Component.razor', csharp: 'Components.cs' };
 
       var statusEl = document.getElementById('status');
       var renderButton = document.getElementById('render');
       var codeEl = document.getElementById('code');
       var rootEl = document.getElementById('root');
+      var languageEl = document.getElementById('language');
+      var fileNameEl = document.getElementById('file-name');
       var diagnosticsEl = document.getElementById('diagnostics');
 
-      codeEl.value = SAMPLE;
+      codeEl.value = SAMPLES[languageEl.value];
 
       function setStatus(text, className) {
         statusEl.textContent = text;
         statusEl.className = className || '';
       }
 
-      var bootPromise = null;
+      // The page itself uses the same loader the package ships.
+      var runner = BlazorRunner.create({
+        onProgress: function (count) {
+          setStatus('downloading runtime… (' + count + ' files)', 'loading');
+        },
+      });
 
-      function boot() {
-        if (bootPromise) return bootPromise;
-        bootPromise = window.Blazor.start()
-          .then(function () {
-            setStatus('ready', 'ready');
-            renderButton.disabled = false;
-          })
-          .catch(function (err) {
-            bootPromise = null;
-            setStatus('failed to start', 'failed');
-            diagnosticsEl.textContent = String((err && err.message) || err);
-            throw err;
-          });
-        return bootPromise;
+      function compile(source, componentName) {
+        return languageEl.value === 'razor'
+          ? runner.renderRazor(source, componentName)
+          : runner.render(source, componentName);
       }
 
-      // The app assembly is loaded lazily just after Blazor.start() resolves, so the first
-      // interop call can race it. Retry until the assembly is present.
-      function invoke(source, rootType) {
-        var attempt = 0;
-        function tryInvoke() {
-          return window.DotNet
-            .invokeMethodAsync('BlazorRunner', 'RenderComponent', source, rootType)
-            .catch(function (err) {
-              var message = String((err && err.message) || err);
-              if (message.indexOf('no loaded assembly') >= 0 && attempt++ < 240) {
-                return new Promise(function (resolve) {
-                  setTimeout(resolve, 250);
-                }).then(tryInvoke);
-              }
-              throw err;
-            });
-        }
-        return tryInvoke();
-      }
-
-      async function render() {
+      async function renderComponent() {
         renderButton.disabled = true;
         diagnosticsEl.textContent = '';
         var started = performance.now();
         try {
-          await boot();
-          var json = await invoke(codeEl.value, rootEl.value.trim());
-          var result = typeof json === 'string' ? JSON.parse(json) : json;
+          var result = await compile(codeEl.value, rootEl.value.trim());
           var elapsed = Math.round(performance.now() - started);
 
           if (result.success) {
@@ -292,13 +282,28 @@
         }
       }
 
-      renderButton.addEventListener('click', render);
+      languageEl.addEventListener('change', function () {
+        fileNameEl.textContent = FILE_NAME[languageEl.value];
+        codeEl.value = SAMPLES[languageEl.value];
+        renderComponent();
+      });
+
+      renderButton.addEventListener('click', renderComponent);
       codeEl.addEventListener('keydown', function (event) {
-        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') render();
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') renderComponent();
       });
 
       setStatus('downloading runtime…', 'loading');
-      boot().then(render, function () {});
+      runner.ready().then(
+        function () {
+          renderButton.disabled = false;
+          return renderComponent();
+        },
+        function (err) {
+          setStatus('failed to start', 'failed');
+          diagnosticsEl.textContent = String((err && err.message) || err);
+        },
+      );
     </script>
   </body>
 </html>
