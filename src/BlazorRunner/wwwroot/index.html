@@ -227,6 +227,20 @@
         razor: {
           files: [
             {
+              filename: '_Imports.razor',
+              content: `@using System.Net.Http
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.Components.Web.Virtualization
+@using Microsoft.AspNetCore.Components.WebAssembly.Http
+@using Microsoft.JSInterop
+@using UserRazor
+@using UserRazor.Layout
+`,
+            },
+            {
               filename: 'App.razor',
               content: `<Router AppAssembly="typeof(App).Assembly">
     <Found Context="routeData">
@@ -241,7 +255,7 @@
 `,
             },
             {
-              filename: 'MainLayout.razor',
+              filename: 'Layout/MainLayout.razor',
               content: `@inherits LayoutComponentBase
 
 <div class="demo-layout">
@@ -255,7 +269,7 @@
 `,
             },
             {
-              filename: 'PlainLayout.razor',
+              filename: 'Layout/PlainLayout.razor',
               content: `@inherits LayoutComponentBase
 
 <article class="plain-layout">@Body</article>

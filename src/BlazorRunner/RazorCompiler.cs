@@ -29,16 +29,30 @@ public static class RazorCompiler
 {
     const string ImportsFileName = "_Imports.razor";
 
+    /// <summary>The root namespace of the user's project — the stand-in for a project name, and what
+    /// folder namespaces are built from (<c>UserRazor.Layout</c>).</summary>
+    const string RootNamespace = "UserRazor";
+
     const string GeneratorTypeName = "Microsoft.NET.Sdk.Razor.SourceGenerators.RazorSourceGenerator";
 
-    const string ImportsSource =
-        "@using System\n" +
-        "@using System.Collections.Generic\n" +
-        "@using System.Linq\n" +
-        "@using System.Threading.Tasks\n" +
-        "@using Microsoft.AspNetCore.Components\n" +
+    /// <summary>
+    /// What a Blazor project gets from its template's root <c>_Imports.razor</c>, used only when the
+    /// project does not bring one of its own.
+    ///
+    /// Folder usings such as <c>@using UserRazor.Layout</c> are deliberately not included: the
+    /// template puts those in the project's own file, and mirroring that means a project behaves here
+    /// exactly as it does under <c>dotnet build</c>.
+    /// </summary>
+    const string DefaultImports =
+        "@using System.Net.Http\n" +
+        "@using System.Net.Http.Json\n" +
+        "@using Microsoft.AspNetCore.Components.Forms\n" +
         "@using Microsoft.AspNetCore.Components.Routing\n" +
-        "@using Microsoft.AspNetCore.Components.Web\n";
+        "@using Microsoft.AspNetCore.Components.Web\n" +
+        "@using Microsoft.AspNetCore.Components.Web.Virtualization\n" +
+        "@using Microsoft.AspNetCore.Components.WebAssembly.Http\n" +
+        "@using Microsoft.JSInterop\n" +
+        "@using " + RootNamespace + "\n";
 
     static readonly string[] CompilerResources =
     {
@@ -122,7 +136,19 @@ public static class RazorCompiler
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary),
             references: ReferenceAssemblies.All);
 
-        var additionalTexts = new List<AdditionalText> { new RazorAdditionalText(ImportsFileName, ImportsSource) };
+        var additionalTexts = new List<AdditionalText>();
+
+        // A project's own _Imports.razor is used as-is, exactly as it would be locally; the template's
+        // equivalent is only supplied when the project has none.
+        var hasImports = razorFiles.Any(file =>
+            file.Filename.Equals(ImportsFileName, StringComparison.OrdinalIgnoreCase) ||
+            file.Filename.EndsWith("/" + ImportsFileName, StringComparison.OrdinalIgnoreCase));
+
+        if (!hasImports)
+        {
+            additionalTexts.Add(new RazorAdditionalText(ImportsFileName, DefaultImports));
+        }
+
         additionalTexts.AddRange(razorFiles.Select(file => (AdditionalText)new RazorAdditionalText(file.Filename, file.Content ?? "")));
 
         GeneratorDriver driver = CSharpGeneratorDriver.Create(

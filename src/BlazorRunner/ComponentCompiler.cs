@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Components;
 using Microsoft.CodeAnalysis;
 
@@ -43,24 +42,6 @@ public static class ComponentCompiler
             for (var i = 0; i < generated.Count; i++)
             {
                 sources.Add(new SourceFile { Filename = "Razor" + i + ".g.cs", Content = generated[i] });
-            }
-
-            // A component in a folder lands in a namespace derived from it (so Pages/Home.razor is
-            // UserRazor.Pages.Home). Import those globally, so any component can reference any other
-            // without an @using, wherever the project puts it.
-            var namespaces = generated
-                .SelectMany(DeclaredNamespaces)
-                .Distinct()
-                .OrderBy(name => name, StringComparer.Ordinal)
-                .ToArray();
-
-            if (namespaces.Length > 0)
-            {
-                sources.Add(new SourceFile
-                {
-                    Filename = "GlobalUsings.g.cs",
-                    Content = string.Join("\n", namespaces.Select(name => "global using " + name + ";")),
-                });
             }
         }
 
@@ -121,15 +102,6 @@ public static class ComponentCompiler
             ? Fail("BLAZOR0001", "No Blazor component found. Declare a class that derives from ComponentBase.")
             : Ok(root, imageLength, routes);
     }
-
-    /// <summary>The Razor generator writes <c>namespace &lt;name&gt;</c> into each generated file;
-    /// read them back rather than predicting how it derives them from folder names.</summary>
-    static readonly Regex NamespacePattern = new Regex(
-        @"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_.]*)",
-        RegexOptions.Multiline);
-
-    static IEnumerable<string> DeclaredNamespaces(string source) =>
-        NamespacePattern.Matches(source ?? "").Select(match => match.Groups[1].Value);
 
     static CompileResult Ok(Type type, int bytes, string[] routes) =>
         new CompileResult { Type = type, Bytes = bytes, Routes = routes, Errors = Array.Empty<DiagnosticInfo>() };

@@ -90,6 +90,12 @@ and `run` to `{ success, output, errors[] }`; every diagnostic is
 `{ id, message, severity, line, column }`. Pass `{ baseUrl, onProgress }` to `create` to point at a
 different copy or report download progress. The playground uses this same loader.
 
+A project is compiled the way a local one is, so what builds here builds locally: a file's folder
+becomes part of its namespace (`Pages/Home.razor` is `UserRazor.Pages.Home`, `Layout/MainLayout.razor`
+is `UserRazor.Layout.MainLayout`), `@page` declares routes, and `@using`s come from the project's own
+`_Imports.razor` — a template-style one is supplied only when the project has none. `UserRazor` is the
+project's root namespace, standing in for the project name.
+
 ## Step 1 — findings
 
 Measured against `@seth0x41/csharp-wasm@1.0.3` (from `_framework/blazor.boot.json` and the string
@@ -147,7 +153,7 @@ A component that throws *while rendering* comes back as `success: false` with th
 | `wwwroot/blazor-wasm.js` | The loader shipped in the package. |
 | `wwwroot/index.html` | The playground page. |
 | `../../serve.js` | Static server with an SPA fallback, so routed paths such as `/counter` load the app. |
-| `../../scripts/prepare-refs.ps1` | Copies the reference assemblies into `refs/`. |
+| `../../scripts/prepare-refs.ps1` | Copies the reference assemblies into `refs/` (BCL, ASP.NET Core, and the Blazor WebAssembly assemblies the ref pack lacks). |
 | `../../scripts/make-package.ps1` | Publishes and assembles `package/`. |
 | `../../prototype/RazorProto` | Desktop spike for the Razor generator — seconds per iteration instead of a wasm publish. |
 
@@ -156,10 +162,12 @@ A component that throws *while rendering* comes back as `success: false` with th
 - **A project compiles into one assembly.** Every file is fed to the Razor generator together and all
   the generated C# goes into a single `CSharpCompilation`, which is what lets components in different
   files reference each other.
-- **Files may sit in folders.** `Pages/Home.razor` becomes `UserRazor.Pages.Home` — the Razor
-  generator derives the namespace from the folder — so the namespaces it emits are read back out of
-  the generated code and imported with `global using`. That way any component can use any other
-  without an `@using`, whatever folder it is in.
+- **Folders and imports behave as they do locally.** `Pages/Home.razor` compiles to
+  `UserRazor.Pages.Home` — the Razor generator derives the namespace from the folder, exactly as it
+  does under `dotnet build` — so a component in another folder is reached with a `@using`, not
+  implicitly. The template's root `_Imports.razor` is supplied only when the project has none; a
+  project that brings its own is used as-is, folder usings and all. (There is no `global using`
+  shortcut, so a project that compiles here compiles locally, and vice versa.)
 - **The user's component runs on the app's own renderer.** `DynamicHost` keeps the compiled `Type` and
   opens it as a child component, so it joins the real Blazor render tree — `@onclick` handlers,
   `StateHasChanged`, `[Inject]`, parameters and lifecycle all work.
@@ -196,9 +204,13 @@ A component that throws *while rendering* comes back as `success: false` with th
 - **A throwing component cannot take the renderer down.** `DynamicHost` renders inside a
   `HostErrorBoundary`; rendering also waits for the pass to complete, so a render-time exception
   becomes a reported diagnostic instead of a blank area and a bogus success.
-- **Reference assemblies are embedded**, not fetched: `prepare-refs.ps1` copies 307 DLLs (11.7 MB)
-  from `Microsoft.NETCore.App.Ref` and `Microsoft.AspNetCore.App.Ref` into `refs/`, embedded as
-  `lib.*` resources.
+- **Reference assemblies are embedded**, not fetched: `prepare-refs.ps1` copies 308 DLLs (11.9 MB)
+  from `Microsoft.NETCore.App.Ref`, `Microsoft.AspNetCore.App.Ref` and the
+  `Microsoft.AspNetCore.Components.WebAssembly` package into `refs/`, embedded as `lib.*` resources.
+  Earlier sources win name overlaps. The Blazor WebAssembly assemblies have to come from the package
+  because the ASP.NET Core ref pack does not contain them — without them a project cannot use
+  namespaces such as `Microsoft.AspNetCore.Components.WebAssembly.Http`, which the template's
+  `_Imports.razor` expects.
 - **`PublishTrimmed=false`** — the compiled user assembly resolves against the full BCL and ASP.NET
   Core at runtime, so nothing may be linked away.
 - **A fresh assembly identity per compile** (`User_<guid>`) — two assemblies with the same name in the
@@ -210,13 +222,16 @@ A component that throws *while rendering* comes back as `success: false` with th
 
 Checked in a real browser (headless Chrome via CDP), against the packaged output:
 
-- **multi-file Razor project**: seven files — `App.razor`, two layouts, `Pages/Home.razor`,
-  `Pages/Counter.razor`, `Pages/About.razor` and a C# file `Greeting.cs` — compile together
-  (`rendered UserRazor.App`), with routes reported as `['/', '/about', '/counter']`;
-- **mixing and folders**: the Home page calls into `Greeting.cs`, and the `Pages/` folder is both
-  routed and usable from the root-level layouts;
-- **layouts**: Home and About render inside `MainLayout` (its nav bar is present), while Counter
-  renders through its own `@layout PlainLayout` (no nav);
+- **a template-shaped project**: eight files laid out like `dotnet new blazorwasm` —
+  `_Imports.razor`, `App.razor`, `Layout/MainLayout.razor`, `Layout/PlainLayout.razor`,
+  `Pages/Home.razor`, `Pages/Counter.razor`, `Pages/About.razor` and a C# file `Greeting.cs` —
+  compile together (`rendered UserRazor.App`), with routes reported as `['/', '/about', '/counter']`;
+- **folders and imports**: the layouts live in `Layout/` (`UserRazor.Layout`) and `App.razor` can name
+  `MainLayout` only because the project's own `_Imports.razor` has `@using UserRazor.Layout` — the
+  same file a local project would carry, including the Blazor WebAssembly usings it expects;
+- **mixing**: `Pages/Home.razor` calls into the C# file `Greeting.cs` in the same compilation;
+- **layouts**: Home and About render inside `MainLayout` (its nav is present), while Counter renders
+  through its own `@layout PlainLayout` (no nav);
 - **routing**: navigating to `/counter` renders that page (URL becomes `/counter`) and its counter
   increments, and opening `/about` directly renders that page;
 - **C# project**: three files (`App.cs`, `Counter.cs`, `Greeting.cs`) render together;
