@@ -43,6 +43,26 @@
       }
       #status.ready { color: var(--ok); border-color: #2f6b52; }
       #status.loading { color: var(--warning); border-color: #6b5726; }
+      /* Compiling is wasm on the main thread, so nothing driven by the main thread moves while it
+         happens and the page looks hung. A transform animation runs on the compositor and keeps going
+         regardless, so the spinner is honest that work is still being done. */
+      #status.loading::before {
+        content: '';
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        margin-right: 7px;
+        border: 2px solid currentColor;
+        border-top-color: transparent;
+        border-radius: 50%;
+        vertical-align: -1px;
+        animation: status-spin 0.9s linear infinite;
+      }
+      @keyframes status-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
       #status.failed { color: var(--error); border-color: #6b2f38; }
       main {
         flex: 1;
@@ -563,6 +583,9 @@ foreach (var n in readings.Where(n => n % 2 == 1).Select(n => n * n))
         renderButton.disabled = true;
         diagnosticsEl.textContent = '';
         saveActiveFile();
+        // Set before the work rather than after: a compile blocks the page for a second or more, and
+        // this is the status the spinner animates through.
+        setStatus(isConsole() ? 'running…' : 'compiling…', 'loading');
         var started = performance.now();
         var console = isConsole();
 
