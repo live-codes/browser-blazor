@@ -1,7 +1,7 @@
 ﻿{
     "homepage":  "https://github.com/live-codes/browser-blazor#readme",
     "description":  "Run C# and render Blazor components in the browser, with no server.",
-    "version":  "0.1.0",
+    "version":  "0.1.1",
     "author":  "Hatem Hosny",
     "name":  "@live-codes/blazor-wasm",
     "keywords":  [

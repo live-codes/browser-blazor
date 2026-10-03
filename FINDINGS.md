@@ -276,3 +276,68 @@ Wiring it into LiveCodes, when that is wanted:
   entry point.
 - **Per-render leakage is negligible.** Each render loads a new assembly into the default load context,
   but a compiled project is only a few KB.
+
+## 11. Compiler in a worker — exploration
+
+Not built. This records why it is the obvious next step for responsiveness, what it would cost, and
+what it would not fix.
+
+**The problem.** Compilation is synchronous Roslyn + Razor on the page's main thread:
+`CSharpInProcess` parses, emits and `Assembly.Load`s, and `RazorCompiler` runs the generator — all in
+the interop call. During the first Razor compile (~4–5 s) nothing driven by the main thread moves, so
+the page looks hung. The console path blocks the same way, because `ConsoleRunner` invokes the user's
+entry point in-process. The playground's status spinner is a compositor `transform` animation for
+exactly this reason — it keeps moving while the thread is blocked (`wwwroot/index.html`).
+
+**What would move.** Everything that compiles or runs user code and needs no DOM: `CSharpInProcess`,
+`RazorCompiler`, `CssScoper`, route extraction, `ReferenceAssemblies` (`refs.zip`), `Payload`, and
+`ConsoleRunner`. What stays on the main thread is the Blazor renderer — `DynamicHost`, `HostRouter`,
+`HostLayout`, `HostErrorBoundary` — which owns the DOM and cannot leave it.
+
+**Design sketch: a second, Blazor-free .NET WebAssembly module in a dedicated Worker.**
+
+- The worker exports `SetBaseUrl`, `CompileProject(filesJson, rootNamespace)`, `RunConsole(source, stdin)`,
+  `ReferenceCount` and `LoadedPayloads`, reusing the existing compiler code unchanged.
+- The main-thread app drops Roslyn, the Razor compiler and the reference assemblies entirely; for a
+  component it receives an assembly image and `Assembly.Load`s it, then renders the resolved `Type`. A
+  compiled project is a few KB, so the bytes cross the boundary as a transferable `ArrayBuffer`.
+- The worker fetches `refs.zip` / `razor.zip` itself (its own `HttpClient`; the same `baseUrl` the
+  loader already pushes in), and can pre-warm the Razor generator with a throwaway compile so the
+  user's first render is warm.
+- Boot the worker lazily, on the first compile, so the initial paint stays light.
+
+**Why the alternatives were rejected.**
+
+- *Yield / chunk the work*: Roslyn's parse + emit and the generator run are single synchronous calls;
+  there is no seam to yield at.
+- *WebAssembly threads* (`WasmEnableThreads` + `SharedArrayBuffer`): needs cross-origin isolation
+  (COOP/COEP) the bundle does not have, and `WithConcurrentBuild(false)` exists precisely because the
+  thread pool is not available.
+- *Host the renderer in the worker*: Blazor manipulates the DOM and JS interop; it cannot run off the
+  main thread. Only the compiler can move.
+
+**Costs and risks.**
+
+- **A second .NET runtime instance.** The main thread keeps the Blazor runtime; the worker adds another
+  (CoreLib + Mono). Roslyn (~9 MB), the reference assemblies (5.3 MB) and the Razor compiler (1.8 MB)
+  move into the worker, so the main-thread *startup* shrinks, but the total download grows. This buys
+  responsiveness, not size — the opposite trade to §5, which was rejected for safety.
+- **Memory.** Two runtimes in one tab, on top of an untrimmed BCL + ASP.NET Core.
+- **Trimming cannot offset it.** The worker runs console programs, which may reference any BCL/ASP.NET
+  type, so its runtime must stay untrimmed too.
+- **Plumbing, not novel problems.** The risks are the worker's `dotnet` boot, the message protocol and
+  the error paths — plus keeping the Roslyn 4.14 pin working in the worker runtime. The compile itself
+  is the same code that already runs here; only its host thread changes.
+
+**Lighter variant, if a second runtime is too much: pre-warm only.** Run a throwaway compile at boot so
+the Razor generator is warm before the user's first render; the freeze moves into the loading phase the
+user already waits through. It does not remove the boot freeze, and because a code change currently
+reloads the page (no live reload — the render tree is bound to the DOM), it would still re-warm on every
+reload. Only worth doing alongside keeping the runtime alive across edits.
+
+**Recommendation.** A spike is worth it if *"the page must stay interactive while the first compile
+runs"* is a requirement; if *"the page must not look hung"* is enough, the compositor spinner already
+covers it. Spike plan: (1) add `src/BlazorCompiler` as a Blazor-free wasm module exposing
+`CompileProject` / `RunConsole`; (2) host it in a worker from `blazor-wasm.js` and `Assembly.Load` its
+output on the main thread; (3) measure total bytes, main-thread boot, first-render time (cold and
+pre-warmed), peak memory, and confirm no main-thread task exceeds ~50 ms during a compile.

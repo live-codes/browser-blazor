@@ -75,11 +75,10 @@ public class DynamicHost : ComponentBase
         builder.SetKey(_renderId);
         builder.AddAttribute(seq++, "ChildContent", (RenderFragment)(child =>
         {
+            // No component yet: render nothing. An embedder can show its own loading state (the
+            // mount is visible and empty), and page text is not the host's to invent.
             if (_componentType is null)
             {
-                child.OpenElement(0, "p");
-                child.AddContent(1, "Nothing rendered yet.");
-                child.CloseElement();
                 return;
             }
 
